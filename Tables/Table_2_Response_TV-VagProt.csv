@@ -1,0 +1,151 @@
+Microbes,truth,prob.-1,prob.1,response,group
+Prevotella bivia,1,2.6730028522046756e-6,0.9999973269971478,1,Prevotella bivia_1
+Gardnerella vaginalis,1,2.7931796233116498e-6,0.9999972068203767,1,Gardnerella vaginalis_1
+Prevotella amnii,1,3.73900141083219e-6,0.9999962609985892,1,Prevotella amnii_1
+Mobiluncus mulieris,1,5.375416524011235e-6,0.999994624583476,1,Mobiluncus mulieris_1
+Prevotella disiens,NA,1.8793810958823546e-5,0.9999812061890412,1,Prevotella disiens_1
+Escherichia coli,1,2.070139236325312e-5,0.9999792986076368,1,Escherichia coli_1
+Megasphaera,NA,2.475391692310455e-5,0.9999752460830769,1,Megasphaera_1
+Prevotella loescheii,NA,2.492858216437084e-5,0.9999750714178356,1,Prevotella loescheii_1
+Sneathia amnii,NA,2.7157088869840124e-5,0.9999728429111302,1,Sneathia amnii_1
+Prevotella,NA,3.140943613821212e-5,0.9999685905638618,1,Prevotella_1
+Prevotella buccalis,NA,3.6178863852873814e-5,0.9999638211361471,1,Prevotella buccalis_1
+Prevotella marshii,NA,3.7892144810129005e-5,0.9999621078551899,1,Prevotella marshii_1
+Porphyromonas,NA,3.960753595135984e-5,0.9999603924640487,1,Porphyromonas_1
+Atopobium vaginae,NA,4.0331067189804106e-5,0.9999596689328102,1,Atopobium vaginae_1
+Prevotella timonensis,NA,4.6983751538039626e-5,0.999953016248462,1,Prevotella timonensis_1
+Megasphaera genomosp.,NA,5.567531328799287e-5,0.999944324686712,1,Megasphaera genomosp._1
+Porphyromonas uenonis,NA,8.686622129610802e-5,0.9999131337787039,1,Porphyromonas uenonis_1
+Peptoniphilus lacrimalis,NA,1.0050538544908114e-4,0.999899494614551,1,Peptoniphilus lacrimalis_1
+Mobiluncus curtisii,NA,1.0194740689032692e-4,0.9998980525931097,1,Mobiluncus curtisii_1
+Peptoniphilus harei,NA,1.0201505467048593e-4,0.9998979849453296,1,Peptoniphilus harei_1
+Prevotella oulorum,NA,1.4413595560423698e-4,0.9998558640443957,1,Prevotella oulorum_1
+undistinguishable,NA,1.6408938883953825e-4,0.9998359106111605,1,undistinguishable_1
+Peptoniphilus,NA,1.6426171565759007e-4,0.9998357382843424,1,Peptoniphilus_1
+Prevotella enoeca,NA,1.7954325453575892e-4,0.9998204567454643,1,Prevotella enoeca_1
+Prevotella oris,NA,2.3192608940600433e-4,0.999768073910594,1,Prevotella oris_1
+Streptococcus oligofermentans,NA,2.359767293993055e-4,0.9997640232706007,1,Streptococcus oligofermentans_1
+Prevotella salivae,NA,2.669357463292303e-4,0.9997330642536708,1,Prevotella salivae_1
+Dialister,NA,2.7234370188916645e-4,0.9997276562981108,1,Dialister_1
+Ruminococcus bicirculans,NA,2.7267210100085244e-4,0.9997273278989991,1,Ruminococcus bicirculans_1
+Mobiluncus,NA,2.866155262558157e-4,0.9997133844737441,1,Mobiluncus_1
+Prevotella melaninogenica,NA,3.031414696700139e-4,0.99969685853033,1,Prevotella melaninogenica_1
+Prevotella micans,NA,3.537059365574341e-4,0.9996462940634425,1,Prevotella micans_1
+Pseudomonas synxantha,NA,3.6415524787800963e-4,0.999635844752122,1,Pseudomonas synxantha_1
+Atopobium,NA,3.925449562152024e-4,0.9996074550437848,1,Atopobium_1
+Streptococcus infantarius,NA,3.99579750038031e-4,0.999600420249962,1,Streptococcus infantarius_1
+Atopobium parvulum,NA,4.01849150986406e-4,0.9995981508490136,1,Atopobium parvulum_1
+Pseudomonas bauzanensis,NA,4.1376477333208983e-4,0.9995862352266679,1,Pseudomonas bauzanensis_1
+Lactobacillus ghanensis,NA,4.1882881852343913e-4,0.9995811711814766,1,Lactobacillus ghanensis_1
+Prevotella denticola,NA,4.269956337095902e-4,0.9995730043662904,1,Prevotella denticola_1
+Bifidobacterium tsurumiense,NA,4.3790340208566675e-4,0.9995620965979143,1,Bifidobacterium tsurumiense_1
+Peptostreptococcus anaerobius,NA,4.5000913811341965e-4,0.9995499908618866,1,Peptostreptococcus anaerobius_1
+Prevotella multisaccharivorax,NA,4.5657891656852346e-4,0.9995434210834315,1,Prevotella multisaccharivorax_1
+Bifidobacterium bifidum,NA,4.8319253648775853e-4,0.9995168074635122,1,Bifidobacterium bifidum_1
+Prevotella pleuritidis,NA,4.885111416810487e-4,0.999511488858319,1,Prevotella pleuritidis_1
+Lactobacillus mucosae,NA,4.934686311883597e-4,0.9995065313688116,1,Lactobacillus mucosae_1
+Ruminococcus,NA,5.554966641637314e-4,0.9994445033358362,1,Ruminococcus_1
+Bifidobacterium,NA,5.627774091925386e-4,0.9994372225908075,1,Bifidobacterium_1
+Prevotella baroniae,NA,5.682205962981034e-4,0.9994317794037019,1,Prevotella baroniae_1
+Prevotella histicola,NA,6.049641238515957e-4,0.9993950358761484,1,Prevotella histicola_1
+Lactobacillus acidophilus,NA,6.251165696495667e-4,0.9993748834303504,1,Lactobacillus acidophilus_1
+Lactobacillus helsingborgensis,NA,6.260674999135516e-4,0.9993739325000864,1,Lactobacillus helsingborgensis_1
+Pedobacter antarcticus,NA,6.343194915793279e-4,0.9993656805084207,1,Pedobacter antarcticus_1
+Prevotella fusca,NA,6.380143576309261e-4,0.9993619856423691,1,Prevotella fusca_1
+Fusobacterium,NA,6.677593896644988e-4,0.9993322406103355,1,Fusobacterium_1
+Dialister microaerophilus,NA,6.792469653882033e-4,0.9993207530346118,1,Dialister microaerophilus_1
+Dialister micraerophilus,NA,6.792469653882033e-4,0.9993207530346118,1,Dialister micraerophilus_1
+Ruminococcus obeum,NA,6.84205304422469e-4,0.9993157946955775,1,Ruminococcus obeum_1
+Bifidobacterium dentium,NA,6.92676364101444e-4,0.9993073236358986,1,Bifidobacterium dentium_1
+Porphyromonas asaccharolytica,NA,6.94180089785071e-4,0.9993058199102149,1,Porphyromonas asaccharolytica_1
+Porphyromonas gingivicanis,NA,7.40297779780666e-4,0.9992597022202193,1,Porphyromonas gingivicanis_1
+Shuttleworthia,NA,7.40413304293664e-4,0.9992595866957064,1,Shuttleworthia_1
+Lactobacillus gigeriorum,NA,8.435458862529957e-4,0.999156454113747,1,Lactobacillus gigeriorum_1
+Streptococcus anginosus,NA,9.27937870793847e-4,0.9990720621292062,1,Streptococcus anginosus_1
+Prevotella pallens,NA,9.279881451080687e-4,0.9990720118548919,1,Prevotella pallens_1
+Chlamydia trachomatis,NA,9.553859520482211e-4,0.9990446140479518,1,Chlamydia trachomatis_1
+Fusobacterium nucleatum,NA,9.588235906593911e-4,0.9990411764093406,1,Fusobacterium nucleatum_1
+Lactobacillus gastricus,NA,0.0010164226703101597,0.9989835773296898,1,Lactobacillus gastricus_1
+Lactobacillus apis,NA,0.0010959411768001993,0.9989040588231998,1,Lactobacillus apis_1
+Pseudomonas psychrophila,NA,0.0011553526233325118,0.9988446473766674,1,Pseudomonas psychrophila_1
+Streptococcus mitis,NA,0.001159174556151605,0.9988408254438484,1,Streptococcus mitis_1
+Prevotella stercorea,NA,0.001168088289297957,0.9988319117107021,1,Prevotella stercorea_1
+Ruminococcus champanellensis,NA,0.001195440304159753,0.9988045596958403,1,Ruminococcus champanellensis_1
+Prevotella oralis,NA,0.001230065471527614,0.9987699345284724,1,Prevotella oralis_1
+Bifidobacterium ruminantium,NA,0.0012740816000808071,0.9987259183999192,1,Bifidobacterium ruminantium_1
+Pseudomonas fluorescens,NA,0.001291432441718072,0.998708567558282,1,Pseudomonas fluorescens_1
+Ruminococcus gnavus,NA,0.0012918510494236625,0.9987081489505764,1,Ruminococcus gnavus_1
+Megasphaera cerevisiae,NA,0.0014464691516869127,0.9985535308483131,1,Megasphaera cerevisiae_1
+Bifidobacterium scardovii,NA,0.0015063296046904022,0.9984936703953096,1,Bifidobacterium scardovii_1
+Lactobacillus psittaci,NA,0.0015533588004264039,0.9984466411995736,1,Lactobacillus psittaci_1
+Bifidobacterium subtile,NA,0.0015664057009652371,0.9984335942990348,1,Bifidobacterium subtile_1
+Prevotella saccharolytica,NA,0.001607363371671317,0.9983926366283287,1,Prevotella saccharolytica_1
+Pseudomonas fulva,NA,0.0017706100755716311,0.9982293899244283,1,Pseudomonas fulva_1
+Shuttleworthia satelles,NA,0.0017769037608631074,0.9982230962391369,1,Shuttleworthia satelles_1
+Prevotella copri,NA,0.001778813279883515,0.9982211867201165,1,Prevotella copri_1
+Bifidobacterium adolescentis,NA,0.0018053945381674103,0.9981946054618326,1,Bifidobacterium adolescentis_1
+Pseudomonas syringae,NA,0.002037455455901931,0.997962544544098,1,Pseudomonas syringae_1
+Prevotella buccae,NA,0.0020459725170145263,0.9979540274829855,1,Prevotella buccae_1
+Lactobacillus secaliphilus,NA,0.0021077015724531357,0.9978922984275469,1,Lactobacillus secaliphilus_1
+Prevotella veroralis,NA,0.002251660153747276,0.9977483398462528,1,Prevotella veroralis_1
+Ruminococcus lactaris,NA,0.0022724160500455963,0.9977275839499544,1,Ruminococcus lactaris_1
+Pseudomonas,NA,0.002292474659257659,0.9977075253407424,1,Pseudomonas_1
+Lactobacillus gasseri,NA,0.0024621801788772906,0.9975378198211227,1,Lactobacillus gasseri_1
+Bifidobacterium mongoliense,NA,0.0025908949431340286,0.997409105056866,1,Bifidobacterium mongoliense_1
+Prevotella nigrescens,NA,0.002658530289791275,0.9973414697102088,1,Prevotella nigrescens_1
+Lactobacillus hominis,NA,0.0026975809704314277,0.9973024190295686,1,Lactobacillus hominis_1
+Lactobacillus kalixensis,NA,0.0027539865980628978,0.9972460134019371,1,Lactobacillus kalixensis_1
+Bifidobacterium moukalabense,NA,0.002778611315947594,0.9972213886840524,1,Bifidobacterium moukalabense_1
+Fusobacterium necrophorum,NA,0.0028212294952725835,0.9971787705047274,1,Fusobacterium necrophorum_1
+Bifidobacterium boum,NA,0.00287250738513435,0.9971274926148657,1,Bifidobacterium boum_1
+Lactobacillus pasteurii,NA,0.002987760748561248,0.9970122392514388,1,Lactobacillus pasteurii_1
+Bifidobacterium stellenboschense,NA,0.0030114140225659253,0.9969885859774341,1,Bifidobacterium stellenboschense_1
+Prevotella intermedia,NA,0.003053069244989936,0.9969469307550101,1,Prevotella intermedia_1
+Pseudomonas aeruginosa,NA,0.003057323721622131,0.9969426762783778,1,Pseudomonas aeruginosa_1
+Streptococcus agalactiae,NA,0.003148137506072049,0.996851862493928,1,Streptococcus agalactiae_1
+Lactobacillus amylovorus,NA,0.003167898235513746,0.9968321017644862,1,Lactobacillus amylovorus_1
+Escherichia,NA,0.003298518276956017,0.996701481723044,1,Escherichia_1
+Lactobacillus johnsonii,NA,0.0032985480412899807,0.9967014519587101,1,Lactobacillus johnsonii_1
+Lactobacillus coleohominis,NA,0.0034692587518415775,0.9965307412481584,1,Lactobacillus coleohominis_1
+Lactobacillus nagelii,NA,0.0034818476513046133,0.9965181523486953,1,Lactobacillus nagelii_1
+Pseudomonas putida,NA,0.003519170095083955,0.996480829904916,1,Pseudomonas putida_1
+Lactobacillus frumenti,NA,0.0035344037296894852,0.9964655962703105,1,Lactobacillus frumenti_1
+Pseudomonas stutzeri,NA,0.003550009742533239,0.9964499902574667,1,Pseudomonas stutzeri_1
+Streptococcus salivarius,NA,0.0035518803905086084,0.9964481196094914,1,Streptococcus salivarius_1
+Streptococcus pneumoniae,NA,0.0035700310438294847,0.9964299689561705,1,Streptococcus pneumoniae_1
+Lactobacillus mellis,NA,0.0035976117314011403,0.9964023882685988,1,Lactobacillus mellis_1
+Lactobacillus kimchiensis,NA,0.004362559412916709,0.9956374405870833,1,Lactobacillus kimchiensis_1
+Ruminococcus albus,NA,0.0045886395391496,0.9954113604608504,1,Ruminococcus albus_1
+Lactobacillus hamsteri,NA,0.004637576921671017,0.995362423078329,1,Lactobacillus hamsteri_1
+Dialister invisus,NA,0.004782358440996845,0.9952176415590032,1,Dialister invisus_1
+Bifidobacterium bohemicum,NA,0.005230140062401207,0.9947698599375988,1,Bifidobacterium bohemicum_1
+Lactobacillus ingluviei,NA,0.005573824549467265,0.9944261754505327,1,Lactobacillus ingluviei_1
+Lactobacillus acetotolerans,NA,0.005920437751102891,0.9940795622488972,1,Lactobacillus acetotolerans_1
+Peptostreptococcus,NA,0.00615056084069624,0.9938494391593038,1,Peptostreptococcus_1
+Prevotella bergensis,NA,0.006278678749539921,0.9937213212504601,1,Prevotella bergensis_1
+Ruminococcus callidus,NA,0.006380260670876666,0.9936197393291233,1,Ruminococcus callidus_1
+Streptococcus,NA,0.006414146272340606,0.9935858537276594,1,Streptococcus_1
+Lactobacillus panis,NA,0.006654228200410001,0.99334577179959,1,Lactobacillus panis_1
+Lactobacillus fermentum,NA,0.007012067816846131,0.9929879321831538,1,Lactobacillus fermentum_1
+Megasphaera elsdenii,NA,0.007214719078967348,0.9927852809210327,1,Megasphaera elsdenii_1
+Bifidobacterium longum,NA,0.007573046141945082,0.9924269538580549,1,Bifidobacterium longum_1
+Lactobacillus graminis,NA,0.008898267820120072,0.99110173217988,1,Lactobacillus graminis_1
+Lactobacillus taiwanensis,NA,0.009657100670834091,0.9903428993291659,1,Lactobacillus taiwanensis_1
+Lactobacillus jensenii,NA,0.010649103238024052,0.989350896761976,1,Lactobacillus jensenii_1
+Pseudomonas fuscovaginae,NA,0.01071164654447433,0.9892883534555257,1,Pseudomonas fuscovaginae_1
+Escherichia fergusonii,NA,0.01245960546515493,0.9875403945348451,1,Escherichia fergusonii_1
+Pedobacter ginsenosidimutans,NA,0.014040147415810377,0.9859598525841896,1,Pedobacter ginsenosidimutans_1
+Lactobacillus oryzae,NA,0.01521029587038944,0.9847897041296105,1,Lactobacillus oryzae_1
+Lactobacillus kitasatonis,NA,0.01583307192942838,0.9841669280705716,1,Lactobacillus kitasatonis_1
+Lactobacillus ultunensis,NA,0.017651020496080028,0.98234897950392,1,Lactobacillus ultunensis_1
+Lactobacillus kefiranofaciens,NA,0.06422825365681514,0.9357717463431848,1,Lactobacillus kefiranofaciens_1
+Lactobacillus senmaizukei,NA,0.274773753942208,0.7252262460577921,1,Lactobacillus senmaizukei_1
+Lactobacillus amylolyticus,NA,0.28527939342364883,0.7147206065763512,1,Lactobacillus amylolyticus_1
+Lactobacillus gallinarum,NA,0.33459073669953165,0.6654092633004683,1,Lactobacillus gallinarum_1
+Lactobacillus vaginalis,NA,0.48648195274698697,0.513518047253013,0,Lactobacillus vaginalis_1
+Lactobacillus intestinalis,NA,0.5302866757275811,0.46971332427241885,-1,Lactobacillus intestinalis_-1
+Lactobacillus delbrueckii,NA,0.8183351616688858,0.18166483833111424,-1,Lactobacillus delbrueckii_-1
+Lactobacillus helveticus,NA,0.9992005975240726,7.994024759273577e-4,-1,Lactobacillus helveticus_-1
+Lactobacillus,NA,0.9999998021459963,1.9785400373617534e-7,-1,Lactobacillus_-1
+Lactobacillus crispatus,-1,0.9999999,9.999999994736442e-8,-1,Lactobacillus crispatus_-1
+Lactobacillus iners,-1,0.9999999,9.999999994736442e-8,-1,Lactobacillus iners_-1

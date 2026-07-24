@@ -1,0 +1,28 @@
+Microbes,truth,prob.-1,prob.1,response,group
+Gardnerella vaginalis,1,0.002178558585659655,0.9978214414143404,1,Gardnerella vaginalis_1
+Prevotella,NA,0.06729378270186234,0.9327062172981376,1,Prevotella_1
+Mobiluncus mulieris,1,0.10078555790413907,0.899214442095861,1,Mobiluncus mulieris_1
+Bifidobacterium,NA,0.1167617782009267,0.8832382217990733,1,Bifidobacterium_1
+Atopobium vaginae,NA,0.2408382887756833,0.7591617112243167,1,Atopobium vaginae_1
+Peptostreptococcus,NA,0.3119801197380785,0.6880198802619215,1,Peptostreptococcus_1
+Fusobacterium nucleatum,NA,0.519957647983698,0.48004235201630197,1,Fusobacterium nucleatum_-1
+Pseudomonas trivialis,NA,0.519957647983698,0.48004235201630197,1,Pseudomonas trivialis_-1
+Pseudomonas aeruginosa,NA,0.733831949464706,0.266168050535294,-1,Pseudomonas aeruginosa_-1
+Lactobacillus hamsteri,NA,0.8395632558572029,0.16043674414279707,-1,Lactobacillus hamsteri_-1
+Lactobacillus hominis,NA,0.9525658139113868,0.04743418608861316,-1,Lactobacillus hominis_-1
+Lactobacillus ultunensis,NA,0.9629186544411126,0.037081345558887424,-1,Lactobacillus ultunensis_-1
+Lactobacillus vaginalis,NA,0.9629186544411126,0.037081345558887424,-1,Lactobacillus vaginalis_-1
+Lactobacillus suebicus,NA,0.9629186544411126,0.037081345558887424,-1,Lactobacillus suebicus_-1
+Streptococcus sobrinus,NA,0.9629186544411126,0.037081345558887424,-1,Streptococcus sobrinus_-1
+Lactobacillus gasseri,NA,0.9782860742714267,0.021713925728573336,-1,Lactobacillus gasseri_-1
+Lactobacillus gallinarum,NA,0.97868161039192,0.02131838960807997,-1,Lactobacillus gallinarum_-1
+undistinguishable,NA,0.9815371290375894,0.018462870962410616,-1,undistinguishable_-1
+Lactobacillus helveticus,NA,0.9915617693790777,0.008438230620922305,-1,Lactobacillus helveticus_-1
+Lactobacillus jensenii,NA,0.9915617693790777,0.008438230620922305,-1,Lactobacillus jensenii_-1
+Lactobacillus taiwanensis,NA,0.9915617693790777,0.008438230620922305,-1,Lactobacillus taiwanensis_-1
+Pseudomonas syringae,NA,0.9931760473930684,0.0068239526069315826,-1,Pseudomonas syringae_-1
+Pseudomonas,NA,0.9941248695248261,0.005875130475173851,-1,Pseudomonas_-1
+Pseudomonas fulva,NA,0.9966969860586046,0.0033030139413954274,-1,Pseudomonas fulva_-1
+Lactobacillus,NA,0.9969253302160929,0.0030746697839071357,-1,Lactobacillus_-1
+Lactobacillus crispatus,-1,0.9980926791791997,0.0019073208208002512,-1,Lactobacillus crispatus_-1
+Lactobacillus iners,-1,0.9985790749196685,0.0014209250803315365,-1,Lactobacillus iners_-1
