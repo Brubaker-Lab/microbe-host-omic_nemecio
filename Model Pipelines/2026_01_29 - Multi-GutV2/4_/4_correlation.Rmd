@@ -1,0 +1,288 @@
+---
+title: "2_correlations"
+author: "Dali_Nemecio"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+This script will generate host-omic-microbe spearman correlations only.
+
+# SET UP MAC ---------------------------------------------------------------------
+## Library 
+```{r, eval=TRUE}
+# #           Load Library **SPECIFY**------------------------------------------------------------
+ packages_needed<-c(
+                    "rstudioapi", 
+                    "tidyverse") 
+  for (pkg in packages_needed){
+ if ( !require(pkg, character.only = TRUE)){
+   library(pkg, character.only = TRUE)
+ } 
+ }
+```
+
+## Script Info and Dir
+```{r, eval=TRUE}
+# #           Collect Script Info and Change To Script Directory ---------------
+# 
+# 
+# #Script Directory
+ script_path_current <- getSourceEditorContext()$path
+ script_path_folder<-sub("/[^/]*$", "", script_path_current)
+ script_name<-sub(".*/", "", script_path_current)
+ script_name_base<-sub("\\..*$", "", script_name)
+# 
+# #Change directory in all code chunks to current script location
+ knitr::opts_knit$set(root.dir = script_path_folder)
+# 
+# #           Collect Run Info------------------------------------------- 
+ run_timestamp <- format(Sys.time(), "%Y_%m_%d_%H%M")
+ 
+ run_sessionInfo<-sessionInfo()
+# 
+```
+
+## Shortcuts
+```{r, eval=TRUE}
+source("/Users/dalinemecio/Documents/1_Rotations/Brubaker/R/x_smaller_folders/short_cuts/short_cuts.R")
+```
+
+## Load Data and Objects Required 
+### Data Prev Folder 
+```{r, eval=TRUE}
+```r
+# Load Data - Collect .rda files ----------------------------------------
+
+# Find Previous Code Folder -----------------------------
+
+# Find the last slash
+last_slash <- max(gregexpr("/", script_path_folder)[[1]])
+
+# Extract the substring
+substring_after_last_slash <- substr(script_path_folder, last_slash + 1, nchar(script_path_folder))
+
+# Extract the first number
+first_number <- regmatches(substring_after_last_slash, regexpr("[0-9]+", substring_after_last_slash))
+
+# Convert the first number to an integer and subtract 1
+new_number <- as.integer(first_number) - 1
+
+# Construct the new path
+new_path <- paste0(
+  substr(script_path_folder, 1, last_slash),
+  new_number,
+  "_*"
+)
+
+# Function to find directory matching the pattern
+find_directory <- function(path_with_wildcard) {
+  
+  # Extract directory path without wildcard
+  directory_path <- dirname(path_with_wildcard)
+  
+  # List files matching the pattern
+  matching_files <- list.files(directory_path, pattern = basename(path_with_wildcard))
+  
+  # Check if any matching directory exists
+  matching_directories <- matching_files[dir.exists(file.path(directory_path, matching_files))]
+  
+  if (length(matching_directories) > 0) {
+    return(file.path(directory_path, matching_directories[1]))
+  } else {
+    return(NULL)
+  }
+}
+
+# Find the actual directory matching the wildcard
+rda_directory <- find_directory(new_path)
+
+# Load .rda files ---------------------------------
+
+# Get list of all .rda files recursively
+rda_files <- list.files(
+  path = rda_directory,
+  pattern = "\\.rda$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+
+# *NEW* objects before loading .rda from previous folder
+objects_beforeload <- ls()
+
+# Load each .rda file
+for (file in rda_files) {
+  load(file)
+}
+
+# NEW* objects obtains from load
+
+objects_afterload <- ls()
+
+# Check Object dim by hand ---------------------------------
+# A little redundant
+
+loaded_obj <- setdiff(objects_afterload, objects_beforeload)
+loaded_obj <- loaded_obj[!loaded_obj %in% c("file", "objects_beforeload")]
+
+print("OBJECTS LOADED AND DIMENSIONS ")
+
+for (obj_name in loaded_obj) {
+  obj <- get(obj_name)  # get the actual object from its name
+  dims <- if (!is.null(dim(obj))) dim(obj) else length(obj)
+  print(paste0(obj_name, " Dim: ", paste(dims, collapse = " x ")))
+}
+
+# Collect starting Envr. ---------------------------------
+
+objects_starting <- ls()
+```
+
+
+### Check Input Object Sizes 
+```{r, Check Input Object Sizes - Previous File, eval=TRUE}
+
+dim_check <- list()
+has_mismatch <- FALSE
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE
+    }
+  }
+}
+
+print(dim_check)
+
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+} else {
+  "No mismatch in loaded object sizes, continue code execution."
+}
+
+```
+
+# Host-omic-microbe Correlations  ---------------------------------- 
+
+```{r, corr}
+
+# Define Input Data --------------------------------------------------------------
+
+                    input1_RNA<-as.matrix(trans_data_share)  
+                    input2_mbiocomp<-as.matrix(mbio_taxo_clean) 
+
+
+# Spearman Correlation - GENERATE HOST-MICROBE OMIC CORR ---------------------------
+
+                      microbes_vs_genes_corr_loop<-suppressWarnings(cor(input2_mbiocomp, input1_RNA, method = "spearman", use = "pairwise.complete.obs")) # KEYSTONE 
+                      microbes_vs_genes_corr_loop<-as.data.frame(microbes_vs_genes_corr_loop) 
+                
+                    
+```
+
+# Closing-------------------------------------
+### Save Object Sizes ***Specify Objects***
+```{r}
+
+
+objects_created <- c("microbes_vs_genes_corr_loop")
+
+
+
+reccord_dim <- function(objects) {
+  
+  result <- list()
+  
+  for (obj_name in objects) {
+    
+    if (exists(obj_name)) {
+      
+      obj <- get(obj_name)
+    
+        # If it's a list, check first element
+    if (is.list(obj) && !is.data.frame(obj) && !is.matrix(obj)) {
+      obj <- obj[[1]]
+    }
+    
+    if (is.data.frame(obj) || is.matrix(obj)) {
+      result[[obj_name]] <- list(
+        rows = nrow(obj),
+        cols = ncol(obj)
+      )
+    } else {
+        
+        warning(paste("Object labeled ", obj_name, "is not a data frame or a matrix, or a list, Skipping."))
+      }
+      
+    } else {
+      
+      warning(paste("Object", obj_name, "does not exist. Skipping."))
+      
+    }
+  }
+  return(result)
+}
+
+objects_dim_list<-reccord_dim(objects_created)
+
+
+print("CREATED OBJECT DIMENSIONS AS FOLLOWS :")
+print(objects_dim_list)
+      
+
+```
+
+
+### Exporting and Clean Up - Part 1/2
+```{r}
+#           Create Output File ------------------------------------------------------
+
+
+current_output_folder<-paste0(script_name_base, "_", run_timestamp, ".Rmd")
+
+dir.create(current_output_folder)
+
+script_path_with_output_folder <- file.path(script_path_folder, 
+                                          current_output_folder)
+
+
+#           Export Run Info ---------------------------------------------------------
+
+writeLines(capture.output(run_sessionInfo), file.path(script_path_with_output_folder, "sessionInfo.txt"))
+
+```
+
+
+### Exporting and Clean Up - Part 2/2 **Specify Objects**
+```{r}
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Objects as .rda - **SPECIFY OBJECTS**----------------------------------------------------
+
+objects_save<-c( objects_created, "objects_dim_list")
+
+                            
+save(list=objects_save,                   
+     file = file.path(script_path_with_output_folder, "env_obj.rda")) 
+
+
+ 
+```
+

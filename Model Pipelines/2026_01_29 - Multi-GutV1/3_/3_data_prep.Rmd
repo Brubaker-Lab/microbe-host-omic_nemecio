@@ -1,0 +1,1086 @@
+---
+title: "3_data_prep_final_V3"
+author: "Dali_Nemecio"
+date: "`r Sys.Date()`"
+output: html_document
+---
+# Overview Summary
+
+A. **All Host Omics**
+
+  1. **Participants**
+  - Adult participants only
+  - Participant M2075 Dropped 
+  - Missing ileum transcriptomics data.
+    - This caused matrix dimension mismatches during correlation analysis.
+    - As a result, this participant's ileum 16S data was dropped.
+  
+  2. **Tissue Sites**
+  - All tissue types were initially selected.
+  - After participant filtering, only **rectum** and **ileum** remain.
+
+B. **Transcriptomics Additional Details**
+
+  - Same PTs as MBio all paired except for M2075 which is missing one tranx sample
+  - Genes with zero SD are dropped 
+
+    
+C. **Microbiome (MBio) Additional Details**
+
+  - Proportion of microbes in total mbio population is calculated
+  - PTs arranged in same order of TranX 
+  - NO pooling of bacteria since there are no duplicated bacteria names. Possible Alex prepooled. 
+    
+        
+D. **Zimmerman** 
+
+1.  In file 1_import_clean_zimm*
+  
+  - I replicate Fig 1 by recalculating the drugFC of microbes X drugs to produce drugFC_ordered.
+  - drugFC_ordered has a forced order of microbes on the x axis and drugs on the y axis, based off of fig 1.
+  - It is not an identical replicate but is very close to their publication 
+          
+2.  Current code below,
+  
+  - Microbe names are unique, however there are different strains present for the same genus/species. 
+  - bacteroides thetaiotaomicron & bacteroides fragilis
+          
+3. **Sensitivity Point: **, `microbe_proportion_meta`
+  -  Is a decimal representing which fraction of the microbes should contain a NONZERO value for a specific drug in order for it to be retained. 
+  - It does not consider if these drugFC values are above the `meta_threshold` at all. Its purpose is to retain drugs that have ANY metabolism activity according to the DrugFC. The assignment of the metabolic status used in the ML portion is determined by `meta_threshold`
+      
+     - Ex. Keeping the drug: If drug A has drugFC of c( 0, 0, 0, 0.1, 0.2, 0.3) for microbes c( mic A, mic B, mic C, mic D, mic E, mic F ), then half of those are indeed non-zero values in which case the drug will be retained within the df. 
+    
+    - Ex. Dropping the drug: If drug A has drugFC of c( 0, 0, 0, 0, 0, 0.3) for microbes c( mic A, mic B, mic C, mic D, mic E, mic F ). There are not enough microbes that have non-zero metabolic values in which case the drug will be dropped within the df. 
+      - *Downstream* this will generate `drugs_meta_restricted`, which is a list of the drugs that passed the microbe proportion test on the zimmerman data. 
+          
+  - **Important note**:
+  - The purpose of discriminating them is the zimmerman restricted drugs will be used to train/test the model and those that did not pass will be predicted on.
+  - The generated list `zimm_metabolism_state` will contain all of the zimmerman restricted/ microbe proportion passed drugs which includes some (4) that are not found in the LINCS. 
+
+4. **Sensitivity Point: **, `meta_threshold`
+    - Is done AFTER the `microbe_proportion_meta`
+    - Is the threshold to the drugFC value we use to assign sufficient metabolic status. This is done AFTER dropping drugs that do not pass the microbe proportion check. 
+    - I acknowledge this means after meta assignment there will be columns that now have less than 50% metabolizers based on our assignment threshold. 
+    
+4. **LINCS**
+    - All drugs shared between zimmerman and LINCS, include the zimmerman restricted drugs (which passed the microbe proportion check) AND those drugs that did NOT pass the microbe proportion check.
+    - The purpose of this is to acquire all the LINCS Drugs and Zimmerman drugs share between the two of them so we can calculate the corr signatures now, so we can use some for training and testing (those associated with the Zimmerman restricted drugs) and the others (which failed the microbe proportion check and therefore are NOT in the zimmerman restricted drugs) are used for predicting on with the made model. 
+
+
+# START ---------------------------------------------------------
+
+## Set up
+
+```{r setup, include=FALSE}
+#           rmd set up----------------------------------------
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# Load Library **SPECIFY**-----------------------------------------
+
+packages_needed <- c(
+               "readxl",
+               "rstudioapi",
+               "tidyverse"
+)
+
+
+
+for (pkg in packages_needed){
+if ( !require(pkg, character.only = TRUE)){
+  library(pkg, character.only = TRUE)
+} 
+}
+
+# Collect Script Info and Change To Script Directory ---------------
+
+
+#Script Directory
+script_path_current <- getSourceEditorContext()$path
+script_path_folder<-sub("/[^/]*$", "", script_path_current)
+script_name<-sub(".*/", "", script_path_current)
+script_name_base<-sub("\\..*$", "", script_name)
+
+#Change directory in all code chunks to current script location
+knitr::opts_knit$set(root.dir = script_path_folder)
+ 
+
+# Collect Run Info ------------------------------------------- 
+
+run_timestamp <- format(Sys.time(), "%Y_%m_%d_%H%M")
+
+run_sessionInfo<-sessionInfo()                      
+
+```
+
+
+## Shortcuts 
+```{r}
+source("/Users/dalinemecio/Documents/1_Rotations/Brubaker/R/x_smaller_folders/short_cuts/short_cuts.R")
+```
+
+
+## Load Data and Objects Required
+```{r}
+
+# Find Previous Code Folder -----------------------------
+
+# Find the last slash
+last_slash <- max(gregexpr("/", script_path_folder)[[1]])
+
+# Extract the substring
+substring_after_last_slash <- substr(script_path_folder, last_slash + 1, nchar(script_path_folder))
+
+# Extract the first number
+first_number <- regmatches(substring_after_last_slash, regexpr("[0-9]+", substring_after_last_slash))
+
+# Convert the first number to an integer and subtract 1
+new_number <- as.integer(first_number) - 1
+
+# Construct the new path
+new_path <- paste0(
+  substr(script_path_folder, 1, last_slash),
+  new_number,
+  "_*"
+)
+
+# Function to find directory matching the pattern
+find_directory <- function(path_with_wildcard) {
+  
+  # Extract directory path without wildcard
+  directory_path <- dirname(path_with_wildcard)
+  
+  # List files matching the pattern
+  matching_files <- list.files(directory_path, pattern = basename(path_with_wildcard))
+  
+  # Check if any matching directory exists
+  matching_directories <- matching_files[dir.exists(file.path(directory_path, matching_files))]
+  
+  if (length(matching_directories) > 0) {
+    
+    return(file.path(directory_path, matching_directories[1]))
+    
+  } else {
+    return(NULL)
+  }
+}
+
+# Find the actual directory matching the wildcard
+rda_directory <- find_directory(new_path)
+
+# Load .rda files  ---------------------------------
+
+objects_beforeload<-ls()
+
+# Get list of all .rda files recursively
+rda_files <- list.files(path = rda_directory, 
+                        pattern = "\\.rda$",
+                        recursive = TRUE,
+                        full.names = TRUE)
+
+# Load each .rda file
+for (file in rda_files) {
+  load(file)
+}
+
+
+# Collect starting Envr.  ---------------------------------
+
+objects_starting<-ls()
+
+ 
+```
+
+FYI skipping check input object size. I get a weird error I dont want to deal with, having issues with object name and get() 
+
+## Obtained objects 
+```{r}
+cur_obj<-ls()
+t<-setdiff( cur_obj, objects_beforeload)
+
+p("Obtained Objects: ")
+t
+```
+
+# HOST TRANX & MBIO ----------------------------------------------
+
+# Prep
+## Define Tissue and Columns 
+```{r}
+
+
+tissue_sites <- c(
+  "Rectum",
+   "Ileum", # small intestine, exclude from UC 
+   "Sigmoid Colon",
+  "Descending (left-sided) colon",
+  "Transverse colon",
+  "Cecum",
+  "Ascending (right-sided) colon", 
+  "Terminal ileum" # small intestine, exclude from UC 
+)
+
+
+cols_needed <- c(
+  "External.ID",
+  "Participant.ID",
+  "data_type",
+  "week_num", 
+  "biopsy_location", 
+  "diagnosis", 
+  "site_name", 
+  "visit_num"
+)
+
+```
+
+## Select Col and Arrange by PT ID
+```{r}
+
+# Select Cols 
+PT_meta<-PT_meta %>% 
+          filter(data_type == "host_transcriptomics" | data_type == "biopsy_16S") %>% # Tranx data only 
+          filter(diagnosis %in% c("nonIBD")) %>%              # want non-disease people
+          filter(site_name %in% c("Cedars-Sinai", "MGH")) %>% # adult only cohorts 
+          filter(biopsy_location %in% tissue_sites) %>%
+          filter(visit_num == 1) %>% 
+          select(all_of(cols_needed)) %>%
+          arrange(Participant.ID) %>% 
+          filter(External.ID != "222171") # drop problematic illum sample with no tranx pair , 
+                                          # see Exploring -  Unequal PT Samples for deets
+
+# Produced Objects 
+print("Represented tissues in meta data: ")
+as.data.frame(table(PT_meta$biopsy_location)) # 18 20 illeum rectum
+```
+
+Currently, excluding the samples that do not specify the tissue type, and those that are non-inflamed. All others are retained 
+
+Cedars-Sinai and MGH are the adult cohorts, the others are pediatric
+
+
+# Mbio Meta
+## Filter and Extract PT IDs 
+```{r}
+
+# Filter Metadata -------------------------------
+
+PT_meta_mbiopt <- PT_meta %>%
+                  filter(data_type == "biopsy_16S")            
+
+
+#Define PT IDs ----------------------------------
+  
+  PT_meta_mbio_extIDs<-PT_meta_mbiopt$External.ID
+  PT_meta_mbio_partIDs<-u(PT_meta_mbiopt$Participant.ID) # order by ext ID better b/c its unique and ensured paired data is actually paired 
+  PT_meta_mbio_partIDs_multi<-PT_meta_mbiopt$Participant.ID  
+
+  
+# Produced Objects -----------------------------
+  
+paste0("Dimension of mbio meta df:", d(PT_meta_mbiopt))       
+paste0("Number of unique Participant IDs in mbio meta: ",l(PT_meta_mbio_partIDs)) 
+paste0("Number of unique External IDs in mbio meta: ", l(PT_meta_mbio_extIDs)) # the same part ID can have multiple ext ID based on tissue sample type 
+
+```
+
+# Tranx Meta
+## Filter Tranx for UC and NonIBD Diagnosis all tissues  
+```{r}
+
+# Get PT ID with mbio data ---------------------------------------
+PT_meta_transpt <- PT_meta %>%
+                      filter(data_type == "host_transcriptomics") %>% 
+                      filter(Participant.ID %in% PT_meta_mbio_partIDs) # KEYSTONE SAME PT THAT PROVIDE MBIO DATA
+
+
+PT_intersect_tranx_PartID<-u(PT_meta_transpt$Participant.ID) 
+
+PT_intersect_tranx_PartID_multi<-PT_meta_transpt$Participant.ID 
+
+PT_intersect_tranx_ExtID<-PT_meta_transpt$External.ID # these PTs are already shared prefer to use ext ID b/c more unique 
+
+
+# Produced Objects -----------------------------
+
+
+paste0("Dimension of TranX Meta df: ", dim(PT_meta_transpt)[1], " x ",dim(PT_meta_transpt)[2])  
+paste0("Number of unique Participant IDs shared b/w TranX and mbio: ",l(PT_intersect_tranx_PartID)) 
+paste0("Number of unique External IDs shared b/w TranX and mbio: ",l(PT_intersect_tranx_ExtID)) 
+
+```
+
+
+## Final External IDs 
+```{r}
+
+PT_intersect_mbio_tranx_ExtID<-c(PT_meta_mbio_extIDs,PT_intersect_tranx_ExtID)
+
+paste0("External IDs of TranX and mBio samples: ", l(PT_intersect_mbio_tranx_ExtID)) #
+
+```
+
+## ... Exploring - Unequal PT Samples 
+```{r, eval=FALSE}
+
+pt_meta_temp<-PT_meta%>%select(cols_needed)
+
+t <- as.data.frame(table(pt_meta_temp$Participant.ID)) %>% arrange(Freq)
+
+t2 <- pt_meta_temp %>% filter(Participant.ID == "H4006")
+
+t3 <- pt_meta_temp %>% filter(Participant.ID %in% PT_intersect_tranx_PartID)
+
+
+t4 <- pt_meta_temp %>% filter(Participant.ID == "M2075")  #
+
+t5 <- pt_meta_temp %>% filter(Participant.ID == "M2075", data_type %in% c("host_transcriptomics", "biopsy_16S"))
+
+
+# All PT and Tissues selected 
+t6<-pt_meta_temp%>%filter(External.ID %in% PT_intersect_mbio_tranx_ExtID)
+
+
+ 
+```
+I think there may be 20 16s as M2075 HAS TWO but is missing the tranx for the second tissue biopsy, therefore there are 20 samples for mbio but 19 samples for tranx.
+
+Drop ExternalID 222171, which is illium from PT M 2075, which does not contain a paired transcriptomics dataset 
+
+Alternatively, if you only select rectum samples it will filter out the ileum and therefore avoid the mismatch
+ 
+# TranX Data
+## Intersect/Filter for Ext ID and Clean
+
+Below will be matched to the intersecting PT in tranx and mbio.
+
+```{r}
+
+# Filter for Desired External PT IDs -------------------------
+
+# Transpose 
+    row_names <- trans_data$Transcript
+    trans_data_t<-tr_drop1col(trans_data)
+
+# filter for external IDs
+    trans_data_t <- trans_data_t %>%
+                     filter(row.names(trans_data_t) %in% PT_intersect_tranx_ExtID) 
+
+# Make Numeric, Remove 0 SD -----------------------------------
+
+  # Now dimensions: patients x microbiome comp
+  
+  # Make all cells numeric 
+      trans_data_t[] <- lapply(trans_data_t, function(x) as.numeric(as.character(x)))
+  
+  # Remove variables with SD zero? 
+      trans_data_t_nosdzero <- trans_data_t[, apply(trans_data_t, 2, sd, na.rm = TRUE) != 0]
+    
+## Forced PT Arrangement ----------------------------------
+      
+  trans_data_t_nosdzero <- trans_data_t_nosdzero[match(PT_intersect_tranx_ExtID, rownames(trans_data_t_nosdzero)), ]
+
+# Produced Objects -------------------------------------
+
+  paste0("Dimensions of Cleaned TranX Data df: ", dim(trans_data_t_nosdzero)[1], " x ",dim(trans_data_t_nosdzero)[2]) 
+```
+
+
+# Mbio Data Part 1 
+## Intersect/Filter PT and Clean
+```{r}
+
+# Reading in 16S data -------------------------------------
+
+    # Create rownames
+    rownames(mbio_taxo) <- sub("\\..*$", "", mbio_taxo$X)
+    
+    # Reorder mbio_taxo to match the vector
+    mbio_taxo <- mbio_taxo[match(PT_meta_mbio_extIDs, rownames(mbio_taxo)), , drop = FALSE] %>%
+                    select(-X)
+
+    
+# Convert to numeric matrix -------------------------
+    
+    mbio_taxo <- data.frame(
+      lapply(mbio_taxo, function(col) as.numeric(as.character(col))),
+      row.names = rownames(mbio_taxo),
+      check.names = FALSE
+    )
+    
+    mbio_taxo <- as.matrix(mbio_taxo)
+    
+    
+# Filter for desired PTs -----------------------------
+  
+  mbio_taxo <- mbio_taxo[rownames(mbio_taxo) %in% PT_meta_mbio_extIDs, , drop = FALSE]
+  
+    
+# FOR MULTI TISSUES DO THIS --------------------------
+
+  # See Dali Exploring section for explanation 
+  # mbio_taxo<-as.data.frame(mbio_taxo) %>% select(-anyof(`222171`))
+  
+
+  # Drop one PT with unmatched pairing ONLY IF Present --------------
+  mbio_taxo <- mbio_taxo[setdiff(rownames(mbio_taxo), "222171"), , drop = FALSE]
+
+
+# Make Microbiome proportion -------------------------
+    
+      mbio_taxo <- prop.table(as.matrix(mbio_taxo), margin = 1)
+
+  
+# Forced Rowname Arrangement----------------------------------
+  
+      mbio_taxo <- mbio_taxo[match(PT_meta_mbio_extIDs, rownames(mbio_taxo)), ]
+  
+      # Collect names  
+      mbio_fullname<-names(as.data.frame(mbio_taxo))
+  
+      
+# Clean Col Names -----------------------------------
+      
+      mbio_t <- map_chr(mbio_fullname, ~ {
+      words <- str_split(.x, "_")[[1]]   # split by underscore
+      words[1] <- paste0(toupper(substr(words[1], 1, 1)), substr(words[1], 2, nchar(words[1]))) # capitalize first word
+      paste(words, collapse = " ")       # join with space
+    })
+  
+      # Copy 
+      mbio_taxo_clean_t<-mbio_taxo
+  
+      # Apply cleaned names 
+      colnames(mbio_taxo_clean_t)<-mbio_t
+  
+      # Clean e coli name missed earlier  
+        colnames(mbio_taxo_clean_t)[colnames(mbio_taxo_clean_t) == "Escherichia.shigella coli"] <- "Escherichia coli"
+      
+        
+       
+# Produced Objects ----------------------
+
+paste0("Dimensions of mBio Data df: ", dim(mbio_taxo_clean_t)[1], " x ",dim(mbio_taxo_clean_t)[2])  # 19 537
+
+```
+
+
+# ZIMMERMAN ----------------------------
+
+## Define Mic Meta State
+```{r}
+
+  metabolism_state <- function(value, thresh) { # Keystone 
+    ifelse(value >= thresh, 1, -1)
+  }
+
+```
+
+## Clean Microbe names 
+```{r}
+
+# Clean the bacteria names set as rownames ----------------
+
+
+  drugFC_ordered_t <- drugFC_ordered %>%       
+    mutate(microbe = rownames(.)) %>%
+    select(microbe, everything())
+  
+  rownames(drugFC_ordered_t)<- NULL 
+  
+  
+  
+    
+  # Microbes that are non-unique 
+    t_1 <- drugFC_ordered_t %>%
+                          filter(str_starts(microbe, "bacteroides fragilis") |
+                                   str_starts(microbe, "bacteroides thetaiotaomicron"))  
+    
+  # Clean Genus 
+  t_1$microbe <- gsub(
+                            "^bacteroides",     # pattern: starts with 'bacteroides'
+                            "Bacteroides",      # replacement
+                            t_1$microbe, 
+                            ignore.case = FALSE
+                          )
+  
+  # microbes that are unique therefore should have name cleaned 
+    t_2 <- drugFC_ordered_t %>%  
+                          filter(
+                            !str_starts(microbe, "bacteroides fragilis") &
+                            !str_starts(microbe, "bacteroides thetaiotaomicron")
+                          )
+    
+    t_2_clean<-  t_2%>%mutate(
+                microbe = microbe %>%
+                  map_chr(~ {
+                    words <- str_split(.x, " ")[[1]]   # split string by space
+                    first_two <- words[1:2]            # take first two words
+                                                      # Capitalize only the first letter of the first word
+                    first_two[1] <- paste0(
+                      toupper(substr(first_two[1], 1, 1)),
+                      substr(first_two[1], 2, nchar(first_two[1]))
+                    )
+                    paste(first_two, collapse = " ")   # join back into string
+                  })
+              )
+
+  # Rejoin unique and non unique microbe names 
+    drugFC_ordered_clean_t<-rbind(t_1,t_2_clean)
+    drugFC_ordered_clean_t<-drugFC_ordered_clean_t%>%select(microbe, everything())
+
+```
+There are unique microbes but there are multiples of the same genus species with unique strain associations. 
+
+## Intersect Zimm Microbes with Mbio host microbes 
+```{r}
+    drugFC_t1<-drugFC_ordered_clean_t%>%
+                          filter(microbe %in% colnames(mbio_taxo_clean_t))
+
+    # Find zimm microbe experimental strains with same Genus and Species as host mbio 
+    drugFC_mic<-drugFC_ordered_clean_t$microbe
+    
+    # Collect the zimm names 
+    frag <- drugFC_mic[grepl("^Bacteroides fragilis", drugFC_mic, ignore.case = TRUE)]
+    thet <- drugFC_mic[grepl("^Bacteroides thetaiotaomicron", drugFC_mic, ignore.case = TRUE)]
+    exp_strain<-c(frag, thet)
+    
+    # Filter for the experimental 
+    drugFC_t2<-drugFC_ordered_clean_t%>%
+                               filter(microbe %in% exp_strain)
+
+    # Combine into same dataframe 
+    drugFC_ordered_clean<-rbind(drugFC_t1, drugFC_t2)
+
+
+
+```
+
+
+
+
+## **>Sensitivity Point<** Define Microbe proportion
+```{r}
+
+# Define proportion of Microbes --------------
+
+microbe_proportion_meta<- 0.50 # Keystone 
+                   # drop drugs that do not meet this 
+                   # minimum proportion of microbes that have any type of meta 
+                   
+
+```
+
+## Drop Drugs with Low Microbe Meta
+
+In the Zimm drugFC, values that are NOT zero (0.01-1) are converted to 1 temporarily. Columns where more than half of the cells are 1 are kept, (i.e columns where more than half of the microbes are metabolizing SOMETHING are kept)
+
+```{r}
+
+# Drop Col/drugs with low microbe metabolism ------------
+      
+          # Collect info 
+          t1 <- drugFC_ordered_clean
+          numbrow <- nrow(t1)
+      
+      # Convert non-zero numeric values to 1
+      numb_cols <- sapply(t1, is.numeric)
+      t1[, numb_cols] <- lapply(t1[, numb_cols], function(x) ifelse(x != 0, 1, 0))
+      
+      # Keep numeric columns where the sum >= half the number of rows
+      keep_cols<- colSums(t1[, numb_cols]) >= (numbrow * microbe_proportion_meta)  # KEYSTONE  
+      keep_drugs<-names(keep_cols)[keep_cols]
+      
+          # Collect lead and end drug name 
+          lead_keep_drug<-keep_drugs[1]
+          end_keep_drug<-keep_drugs[length(keep_drugs)]
+
+      # Select Drugs/cols 
+      drugFC_mic_prop_pass_t<-drugFC_ordered_clean%>%
+                                select(microbe, all_of(keep_drugs))
+      
+          # Collect Difference between 
+          drop_drug<-setdiff(names(drugFC_ordered_clean), keep_drugs) 
+          drop_drug<-drop_drug[2:l(drop_drug)]
+          
+          # Collect drop lead and end drug name 
+          lead_drop_drug<-drop_drug[1]
+          end_drop_drug<-drop_drug[length(drop_drug)]   
+          
+# Produced Objects ----------------
+      
+paste0("Dimensions of Drug FC with microbes that pass proportion metabolize: ", " # microbes ", dim(drugFC_mic_prop_pass_t)[1], " x "," # of drugs ",dim(drugFC_mic_prop_pass_t)[2]) # 
+        
+```
+
+## **>Sensitivity Point<** Define Threshold for Metabolism State 
+```{r}
+
+# Define meta_threshold ------------------------------
+
+meta_threshold<-0.5 # Keystone
+                    # Drug metabolized at 12 hours (proportion, 0.5 = 50% ) 
+
+```
+
+## Add Metabolic State 
+
+```{r}
+
+# Apply/assign metabolomic values ----------------------
+
+  # Drugs/microbes that passed microbe proportion test 
+  pass_meta_thresh<- drugFC_mic_prop_pass_t%>% 
+                        
+                        # Assign +1 or -1 Metabolomic Value 
+                        mutate(across(where(is.numeric), 
+                                      ~ metabolism_state(.x, meta_threshold)))%>%  # KEYSTONE 
+  
+                         pivot_longer(cols = lead_keep_drug:end_keep_drug, # Elongate df
+                             names_to = "drug", 
+                             values_to = "state")
+
+  # Drugs/microbes that DID NOT pass microbe proportion test 
+
+  na_meta_thresh<-drugFC_ordered_clean%>% 
+    
+                        select(microbe, all_of(drop_drug))%>%
+                        
+                        # Assign NA for Metabolomic Value 
+                        mutate(across(where(is.numeric), 
+                                      ~ metabolism_state(.x, NA))) %>%  # KEYSTONE 
+  
+                         pivot_longer(cols = lead_drop_drug:end_drop_drug, # Elongate df
+                             names_to = "drug", 
+                             values_to = "state")
+      
+# Merge ----------------------------
+  
+zimm_metabolism_state_temp<-rbind(pass_meta_thresh, na_meta_thresh)
+  
+# Arrange rows alphabetically by Microbe name, and then drug name   
+zimm_metabolism_state_temp<-zimm_metabolism_state_temp%>%
+                                arrange(microbe, drug) # Microbe alphabetically arranged
+
+
+# List unique Drugs retained from Zimm ------------------------ 
+  
+drugs_meta_restricted<-u(pass_meta_thresh$drug) # drugs that passed microbe prop and will be used for testing and training 
+  
+  
+drugs_NA_meta<-u(na_meta_thresh$drug) # drugs that failed microbe prop and will be used for prediction
+
+
+```
+
+
+## Produced Objects 
+```{r}
+
+# Produced Summary ----------------------
+paste0("Elongated PAIRINGs of Microbes and Drug Meta Status:")
+paste0("Number of Represented Drugs for Testing/Training in Zimm: ", l(drop_drug)) 
+paste0("Number of Represented Drugs for Prediction in Zimm: ", l(drop_drug))
+
+```
+# MBIO Part 2 ---------------------------
+## Arrange microbes like Zimm 
+```{r}
+
+# Sort Alphabetically by Microbe in same r------------------- 
+  # get list of microbes 
+  t <- unique(zimm_metabolism_state_temp$microbe)
+  t <- t[!t %in% exp_strain]
+  t2<-sort(c(t, "Bacteroides fragilis","Bacteroides thetaiotaomicron"))
+
+
+mbio_taxo_clean<-as.data.frame(mbio_taxo_clean_t)%>%
+                     dplyr::select(all_of(sort(t2))) # alphabetically
+                      
+                  # Does not include the specific strains of bacteroides fragilis and thetaiotaomicron 
+              
+```
+
+
+# LINCS DRUG LIBRARY ----------------------------------------------
+
+## Intersect ZIMM and LINCS Drugs
+```{r}
+
+
+# Select Drugs in LINCS with Zimm defined meta restrictions 
+    
+    colnames(lincs_mean_alldrugs)[1]<-"drug"
+
+    lincs_mean_14<-lincs_mean_alldrugs%>%
+                        filter(drug %in% drugs_meta_restricted)%>%
+                        arrange(drug)
+    
+    
+
+# Drugs in the 176 that are in the LINCS 
+    lincs_mean_130<-lincs_mean_alldrugs%>%
+                        filter(drug %in% ordered_drugs_176_final)%>%
+                        arrange(drug) 
+    
+    
+# Filter Zimm 
+    zimm_metabolism_state<-zimm_metabolism_state_temp%>%
+                                  filter(drug %in% lincs_mean_130$drug) # Keystone 
+    
+    l(u(zimm_metabolism_state$drug)) #130 
+
+    
+# Clean and rename For Downstream 
+
+      lincs_mean_selectdrugs<-lincs_mean_130%>% #  original, shared drugs b/w published Zimm and LINCS
+                              rename(DRUG = drug) %>% 
+                              arrange(DRUG) # order alphabetically
+
+# Produced Objects Summary ----------
+paste0("Of the Zimm Restricted Drugs ", nrow(lincs_mean_14), " are also found in LINCS") # 14 12328 
+paste0("This means there are ", l(drugs_meta_restricted)-nrow(lincs_mean_14) , " NOT found in the LINCS that are defined in the Zimm Restricted Drugs")
+    # FYI there are four drugs in the restricted vec that re not in lincs 
+
+paste0("LINCS filtered for same genes in ZIMM: ")
+paste0("Includes both restricted drugs with assigned meta states and those that were dropped due to insufficient microbe metabolizing") 
+paste0("drugs ", dim(lincs_mean_130)[1], " x ","of genes ",dim(lincs_mean_130)[2]-1)
+
+
+```
+
+
+## Intersect TranX and LINCS 
+```{r }
+
+# Make Gene Names Consistent --------------------------------
+
+  clean_colnames <- function(x) {
+      
+    # ID col names that would be duplicates if converted 
+        # Apply uppercasing and punctuation standardization to colnames only
+        cleaned_colnames <- colnames(x) %>%
+                            toupper() %>%
+                            str_replace_all("[-_]", ".")
+                          
+        # Find all duplicated column names (case-insensitive, punctuation-normalized)
+        duplicated_col_index <- which(duplicated(cleaned_colnames))
+        
+    if( l(duplicated_col_index) != 0){
+    # Remove second+ duplicates from data
+        x_t <- x[, -duplicated_col_index]
+      
+    } else {
+        
+      x_t <- x
+      
+    }
+    
+    # Convert the col names 
+        out_t<- x_t %>%
+          rename_with(~ toupper(.) %>% str_replace_all("[-_]", "."))
+        
+    
+    # Sort Alphabetically
+        out <- out_t%>%dplyr::select(sort(names(.)))
+        
+    if("DRUG" %in% names(out_t)){
+      
+      out<-out_t%>%dplyr::select(DRUG, everything())
+      
+    }    
+        
+    return(out)
+    
+  }
+  
+  t_trans<-clean_colnames(trans_data_t_nosdzero) 
+  t_lincs_selectdrugs<-clean_colnames(lincs_mean_selectdrugs)  
+
+
+# Retain Shared Genes (microbe-RNA Corr and LINCS Select Estrogen) ----------
+
+  # Get gene list 
+    t_shared<-table(c(names(t_trans), names(t_lincs_selectdrugs)))
+    t_shared<-as.data.frame(t_shared)%>%filter(Freq == 2)%>%pull(Var1)
+  
+  # Filter df 
+    trans_data_share<-t_trans%>%select(all_of(t_shared)) # Keystone
+    
+    lincs_selectdrugs_share<-t_lincs_selectdrugs%>%dplyr::select(DRUG, t_shared)  # Keystone
+    
+ 
+# Produced Objects -------------------------------------
+    
+  if(
+    u(rownames(trans_data_t_nosdzero) == rownames(trans_data_share)) == TRUE){print("Pass Check: Same participant IDs expected.")}else{stop("PT IDs mismatch. Terminate code. ")} # all should be TRUE only dropped cols 
+
+# Host Transcriptomics 19 11780
+paste0("Dimensions of TranX Data with Shared LINCS Genes ", "samples ", dim(trans_data_share)[1], " x ","of genes ",dim(trans_data_share)[2])  
+
+# LINCS 130 11781
+paste0("Dimensions of LINCS Data with Shared LINCS Genes ", "drugs ", dim(lincs_selectdrugs_share)[1], " x ","of genes ",dim(lincs_selectdrugs_share)[2]-1) 
+  
+
+
+```
+# SUMMARY ------------------------------------
+# Dry  
+```{r}
+
+# Host Tranx, ordered exID, same genes as LINCS
+d(trans_data_share)         # 19 11780 
+
+# mbio with ordered exid  
+d(mbio_taxo_clean)          # 19 33
+
+# LINCS, col = same genes as tranx , rows = same 
+d(lincs_selectdrugs_share)  # 130 varies 11780/1  
+
+# Bacteria and drug pairing assigned -1, +1, NA
+d(zimm_metabolism_state)    # 7930   3
+
+
+```
+
+# Print 
+```{r}
+
+# Host TranX and Mbio Participants ------------
+
+    # Check Participant IDs are the same 
+    if(
+      
+      # all participant IDs in order and the same
+      isTRUE(unique(
+        rownames(mbio_taxo_sanity) == #Pairs unique IDs to Part ID 
+        rownames(trans_data_t_nosdzero_sanity))) ==TRUE &
+    
+      # Final table has same # of PT in it
+      isTRUE(nrow(mbio_taxo_clean) == nrow(trans_data_share)) == TRUE
+    
+    ){
+      
+      print(paste0( "Host TranX and Mbio Number of Shared/Ordered Participants: ", nrow(mbio_taxo_clean)) )  # final objects that inherent from sanity check objects
+      
+    } else{ stop("Error: Host Omics Failed Check.")}
+    
+    
+# Zimm and LINCS Drugs ----------------------------
+
+
+    # Check Drugs are the same 
+    if(
+      
+      # Same drugs names in same order in final tables
+      isTRUE(u ( 
+                u(zimm_metabolism_state$drug) == #Pairs unique IDs to Part ID 
+                  lincs_selectdrugs_share$DRUG) ) == TRUE
+    ){
+      
+      print(paste0( "Zimm and LINCS Number of Shared/Ordered Drugs : ", l(u(zimm_metabolism_state$drug)) ))  # final objects that inherent from sanity check objects
+      
+    } else{ stop("Error: Zimm and LINCS Number of Shared/Ordered Drugs Failed Check.")}
+    
+
+# LINCS and TranX Genes -----------------------
+
+
+    # Check Genes are the same 
+    if(
+      
+      # Same gene names in same order in final tables
+      isTRUE(u ( n(trans_data_share) == n(lincs_selectdrugs_share)[-1] # exclude drug col
+
+
+        
+                    ) ) == TRUE
+    ){
+      
+      print(paste0( "LINCS and TranX Number of Shared/Ordered Genes : ", l(n(trans_data_share) )))  # final objects that inherent from sanity check objects
+      
+    } else{ stop("Error: LINCS and TranX Number of Shared/Ordered Genes Failed Check.")}
+    
+
+
+
+# Zimm and mBio Microbes --------------------
+    
+    # Breakdown final tables 
+      # get list of microbes 
+      t <- unique(zimm_metabolism_state$microbe)
+      t <- t[!t %in% exp_strain]
+      zim_trim<-sort(c(t, "Bacteroides fragilis","Bacteroides thetaiotaomicron"))
+          
+    # Check Genes are the same 
+    if(
+      
+      # Same gene names in same order in final tables
+      isTRUE(u ( 
+            
+                  zim_trim == colnames(mbio_taxo_clean) # exclude drug col
+
+
+        
+                    ) ) == TRUE
+    ){
+      
+      print(paste0( "Zimm and mBio Number of Shared/Ordered Microbes: ", l(zim_trim )))  # final objects that inherent from sanity check objects
+      
+    } else{ stop("Error: Zimm and mBio Number of Shared/Ordered Microbes Failed Check.")}
+    
+
+
+
+
+```
+
+# For Testing, Training, Prediction 
+```{r}
+# Breakdown 
+    pred<-zimm_metabolism_state%>%filter(is.na(state))
+    testrain<-zimm_metabolism_state%>%filter(!is.na(state))
+
+# Print OUt
+print(paste0("The Zimm data denoted at zimm_metabolism_state, FINAL DIMENSIONS are:", d(zimm_metabolism_state)[1] ," X " , d(zimm_metabolism_state)[2] ))
+      
+paste0("Number of Represented Drugs for Testing/Training in Zimm: ", l(u(testrain$drug)))
+paste0("Number of Represented Drugs for Prediction in Zimm: ",  l(u(pred$drug)))
+paste0("Number of Represented Microbes for Testing/Training/Prediction in Zimm: ", l(u(zimm_metabolism_state$microbe)))
+
+
+```
+
+
+# CLOSING --------------------------------------------------
+### Save Object Sizes ***Specify Objects***
+```{r}
+
+# Note- rather than saving all created objects I will specify the three dataframes we need for the next code section. 
+
+objects_created <- c(
+  "trans_data_share",     # 19 11780   # Host Tranx, ordered exID, same genes as LINCS
+  "mbio_taxo_clean",            # 19 537     # mbio with ordered exid  #  
+  "lincs_selectdrugs_share",      # 130 varies 11780  # LINCS, col = same genes as tranx , rows = same 
+  "zimm_metabolism_state" # 13376 3    # drugfc with cleaned microbe names and converted to meta status based on meta_threshold, contains same mbio as hosts 
+                     )
+
+reccord_dim <- function(objects) {
+  
+  result <- list()
+  
+  for (obj_name in objects) {
+    
+    if (exists(obj_name)) {
+      
+      obj <- get(obj_name)
+      
+      if (is.data.frame(obj) || is.matrix(obj)) {
+        
+        rows <- nrow(obj)
+        cols <- ncol(obj)
+        result[[obj_name]] <- list(rows = rows, cols = cols)
+        
+      } else {
+        
+        warning(paste("Object labeled ", obj_name, "is not a data frame or a matrix. Skipping."))
+      }
+      
+    } else {
+      
+      warning(paste("Object", obj_name, "does not exist. Skipping."))
+      
+    }
+  }
+  return(result)
+}
+
+objects_dim_list<-reccord_dim(objects_created)
+
+
+
+#          Summary --------------------------------------------- 
+# cat("There are ** ", length(shared_ids), " ** unique patient IDs and ** ", length(shared_genes), " ** shared genes found between input RNA and mbiocomp datasets.\n", "CREATED OBJECT DIMENSIONS AS FOLLOWS : \n")
+
+print(objects_dim_list)
+
+```
+
+
+### Exporting and Clean Up - Part 1/2
+```{r}
+#           Create Output File ------------------------------------------------------
+
+
+current_output_folder<-paste0(script_name_base, "_", run_timestamp, ".Rmd")
+
+dir.create(current_output_folder)
+
+script_path_with_output_folder <- file.path(script_path_folder, 
+                                            current_output_folder)
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Executed Code ----------------------------------------------------
+
+copy_and_output_code <- function(script_path) {
+  if (file.exists(script_path)) {
+    
+    rstudioapi::documentSave()
+    
+    script_content <- readLines(script_path)
+    
+    writeLines(script_content, current_output_folder)
+  } else {
+    message("Error: The specified script path does not exist.")
+  }
+}
+
+# Call the function to copy and export the code
+copy_and_output_code(script_path_current)
+
+#           Export Run Info ---------------------------------------------------------
+
+writeLines(capture.output(run_sessionInfo), "sessionInfo.txt")
+
+```
+
+
+### Exporting and Clean Up - Part 2/2 **Specify Objects**
+```{r}
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Objects as .rda - **SPECIFY OBJECTS**----------------------------------------------------
+
+objects_save<-c( objects_created, "objects_dim_list")
+
+                            
+save(list=objects_save,                   
+     file = "env_obj.rda")
+
+
+ 
+```
+
+### Clear Env./Re-Add Generated Objects
+```{r}
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Clear Environment/Re-Add Generated Objects  ------------------------------------------------------
+
+
+#clear environment
+rm(list = ls()) #USE VERY CAREFULLY ONLY ACTIVATE AT END OF PIPELINE
+# rm(list = objects_save)
+
+#readd the objects
+load("env_obj.rda")
+
+
+```
+
+# END OF SCRIPT-----------------------------------------------------------

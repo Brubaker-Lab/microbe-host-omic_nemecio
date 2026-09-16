@@ -1,0 +1,1394 @@
+---
+title:  "prediction_featExpxMic-feat.Rmd"
+author: "Dali_Nemecio"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+
+Pipeline Summary 
+
+1. 144/192 patients were randomly selected to generate the training data. 48/192 patients were randomly selected to generate the testing data. Each patient set were used to bootstrapp microbe-protein correlations which were then multiplied by LINCS CD. This included non metabolic, metabolic, and unknown microbe-protein relationships (-1, +1, NA) 
+2. The pre-training data is bootstrapped for 100 iterations, 10 times to generate a list of 10 dataframes. 
+2. Each dataframe in the list undergoes a t-test for feature selection; top features shared across all 10 dataframes are retained selected to define the MDH signature  
+5. Using t-test identified features, we then train the model with the first dataframe from the training list of dataframes. 
+6. Prediction with the generated model is done on all testing, training, and unknown data types. Both bootstrapped data and raw patient MDH values are predicted on here. The paper only contains the raw patient MDH predictions. 
+  
+  
+# Set up 
+## Library and Shortcuts 
+```{r}
+# Set Up - Section 1 -------------------------------------------------------
+#           rmd set up----------------------------------------
+knitr::opts_chunk$set(echo = TRUE)
+
+
+#           Load Library **SPECIFY**------------------------------------------------------------
+packages_needed<-c("knitr",
+                   "tidyverse",
+                   "tibble", 
+                   "dplyr",
+                   "rstudioapi", 
+                   "mlr")  
+
+
+for (pkg in packages_needed){
+if ( !require(pkg, character.only = TRUE)){
+  library(pkg, character.only = TRUE)
+} 
+     
+}
+
+
+
+#           Collect Script Info and Change To Script Directory ---------------
+
+
+#Script Directory
+script_path_current <- getSourceEditorContext()$path
+script_path_folder<-sub("/[^/]*$", "", script_path_current)
+script_name<-sub(".*/", "", script_path_current)
+script_name_base<-sub("\\..*$", "", script_name)
+#Change directory in all code chunks to current script location
+
+knitr::opts_knit$set(root.dir = script_path_folder)
+ 
+
+#           Collect Run Info------------------------------------------- 
+run_timestamp <- format(Sys.time(), "%Y_%m_%d_%H%M")
+
+run_sessionInfo<-sessionInfo()
+
+
+#           Shortcut Custom functions --------------------------------------------------------
+
+
+v <- function(data) {
+  tab_name <- deparse(substitute(data))
+  View(data, title = tab_name)
+}
+
+d<-function(data){
+  dim(data)
+}
+
+l<-function(data){
+  length(data)
+}
+
+u<-function(data){
+  unique(data)
+}
+
+h<-function(data){
+  head(data)
+}
+
+t<-function(data){
+  tail(data)
+}
+
+
+# End Set up
+
+```
+
+## Load Data and Objects Required
+
+```{r}
+# Load Data - Collect .rda files ----------------------------------------
+
+#       Find Previous Code Folder -----------------------------
+
+# Find the last slash
+last_slash <- max(gregexpr("/", script_path_folder)[[1]])
+
+# Extract the substring
+substring_after_last_slash <- substr(script_path_folder, last_slash + 1, nchar(script_path_folder))
+
+# Extract the first number
+first_number <- regmatches(substring_after_last_slash, regexpr("[0-9]+", substring_after_last_slash))
+
+# Convert the first number to an integer and subtract 1
+new_number <- as.integer(first_number) - 1
+
+# Construct the new path
+new_path <- paste0(
+  substr(script_path_folder, 1, last_slash),
+  new_number,
+  "_*"
+)
+
+# Function to find directory matching the pattern
+find_directory <- function(path_with_wildcard) {
+  
+  # Extract directory path without wildcard
+  directory_path <- dirname(path_with_wildcard)
+  
+  # List files matching the pattern
+  matching_files <- list.files(directory_path, pattern = basename(path_with_wildcard))
+  
+  # Check if any matching directory exists
+  matching_directories <- matching_files[dir.exists(file.path(directory_path, matching_files))]
+  
+  if (length(matching_directories) > 0) {
+    
+    return(file.path(directory_path, matching_directories[1]))
+    
+  } else {
+    return(NULL)
+  }
+}
+
+# Find the actual directory matching the wildcard
+rda_directory <- find_directory(new_path)
+
+
+
+#       Load .rda files  ---------------------------------
+         
+
+# Get list of all .rda files recursively
+rda_files <- list.files(path = rda_directory, 
+                        pattern = "\\.rda$",
+                        recursive = TRUE,
+                        full.names = TRUE)
+
+# Load each .rda file
+for (file in rda_files) {
+  load(file)
+}
+
+
+#       Collect starting Envr.  ---------------------------------
+
+objects_starting<-ls()
+
+
+```
+
+## Check Input Object Sizes
+
+```{r}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+
+## Obtain Objects from folder 1\_\*
+
+```{r}
+#       Find Object Code Folder 1_* -----------------------------------
+
+        other_folder_number<-1
+
+        # Construct the new path
+
+        more_objects_path <- paste0(
+          substr(script_path_folder, 1, last_slash),
+          other_folder_number,
+          "_*"
+        )
+        
+        more_objects_path_defined<-find_directory(more_objects_path)
+        
+        
+# Get objects from other 1_* folder 
+
+rda_files<-list.files(path = more_objects_path_defined, 
+                          pattern = "\\.rda$",
+                          recursive = TRUE,
+                          full.names = TRUE) 
+   
+
+
+# Load each .rda file in 1_* folder 
+for (file in rda_files) {
+  load(file)
+}
+        
+
+#get downloaded objects 
+objects_starting<-ls()
+
+```
+
+
+
+## Check Input Object Sizes
+
+```{r}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+## Obtain Objects from folder 2\_\*
+
+```{r}
+#       Find Object Code Folder 2_* -----------------------------------
+
+        other_folder_number<-2
+
+        # Construct the new path
+
+        more_objects_path <- paste0(
+          substr(script_path_folder, 1, last_slash),
+          other_folder_number,
+          "_*"
+        )
+        
+        more_objects_path_defined<-find_directory(more_objects_path)
+        
+        
+# Get objects from other 2_* folder 
+
+rda_files<-list.files(path = more_objects_path_defined, 
+                          pattern = "\\.rda$",
+                          recursive = TRUE,
+                          full.names = TRUE) 
+   
+
+
+# Load each .rda file in 2_* folder 
+for (file in rda_files) {
+  load(file)
+}
+        
+
+#get downloaded objects 
+objects_starting<-ls()
+
+```
+
+
+
+## Check Input Object Sizes
+
+```{r}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+
+## Obtain Objects from folder 3\_\*
+
+```{r}
+#       Find Object Code Folder 3_* -----------------------------------
+
+        other_folder_number<-3
+
+        # Construct the new path
+
+        more_objects_path <- paste0(
+          substr(script_path_folder, 1, last_slash),
+          other_folder_number,
+          "_*"
+        )
+        
+        more_objects_path_defined<-find_directory(more_objects_path)
+        
+        
+# Get objects from other 3_* folder 
+
+rda_files<-list.files(path = more_objects_path_defined, 
+                          pattern = "\\Test_List_Stacked.rda$",
+                          recursive = TRUE,
+                          full.names = TRUE) 
+   
+
+
+# Load each .rda file in 3_* folder 
+for (file in rda_files) {
+  load(file)
+}
+        
+# Get objects from other 3_* folder 
+
+rda_files<-list.files(path = more_objects_path_defined, 
+                          pattern = "\\Train_List_Stacked.rda$",
+                          recursive = TRUE,
+                          full.names = TRUE) 
+   
+
+
+# Load each .rda file in 3_* folder 
+for (file in rda_files) {
+  load(file)
+}
+
+
+# Get objects from other 3_* folder 
+
+rda_files<-list.files(path = more_objects_path_defined, 
+                          pattern = "\\NA_list_stacked.rda$",
+                          recursive = TRUE,
+                          full.names = TRUE) 
+   
+
+
+# Load each .rda file in 3_* folder 
+for (file in rda_files) {
+  load(file)
+}
+     
+
+     
+#get downloaded objects 
+objects_starting<-ls()
+
+```
+
+## Check Input Object Sizes
+
+```{r}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+
+## Obtain Objects from folder 4\_\*
+
+```{r}
+#       Find Object Code Folder 4_* -----------------------------------
+
+        other_folder_number<-4
+
+        # Construct the new path
+
+        more_objects_path <- paste0(
+          substr(script_path_folder, 1, last_slash),
+          other_folder_number,
+          "_*"
+        )
+        
+        more_objects_path_defined<-find_directory(more_objects_path)
+        
+        
+# Get objects from other 4_* folder 
+
+rda_files<-list.files(path = more_objects_path_defined, 
+                          pattern = "\\.rda$",
+                          recursive = TRUE,
+                          full.names = TRUE) 
+   
+
+
+# Load each .rda file in 4_* folder 
+for (file in rda_files) {
+  load(file)
+}
+        
+
+#get downloaded objects 
+objects_starting<-ls()
+
+```
+
+## Check Input Object Sizes
+
+```{r}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+
+
+
+
+
+# MAIN -------------------------------
+
+
+
+# Prep
+```{r}
+# Prepare and strip data for MLR functions ----------
+
+prep_mlr_pred<-function(df, featvec, statecol){
+  
+  
+# col name consistency - feat col names in dataframe 
+    names(df)<-gsub("\\-",".",names(df))
+    
+
+# col name consistency - feat col names featvector
+    featvec<-gsub("\\-",".",featvec)
+
+    #desired col names in training data
+    alongforride_colnames<-colnames(df[1:6])
+    
+    colnames_w_features<- c(alongforride_colnames, featvec)
+   
+  # Filter known classes using dynamic column name
+  DF_known <- df %>%
+    # dplyr::filter(.data[[statecol]] %in% c(-1, 1)) %>%
+    dplyr::select(all_of(colnames_w_features))
+
+  # Convert target to factor safely
+  DF_known[[statecol]] <- factor(DF_known[[statecol]] #, levels = c( 1, -1)) 
+                                    )
+  
+  # Strip down to target + features
+  out_stripped <- DF_known %>%
+    dplyr::select(all_of(c(statecol, featvec)))
+
+  # Diagnostics
+  print(paste0("Dimensions of entering df: ", dim(df)[1], " x ", dim(df)[2]))
+  print(paste0("Dimensions of output df: ", dim(out_stripped)[1], " x ", dim(out_stripped)[2]))
+
+  print("Count of drug metabolism state in out data:")
+  print(table(out_stripped[[statecol]]))
+
+  return(out_stripped)
+  
+}
+
+```
+
+## Assign name of model 
+```{r}
+nameofmodel<-"TV-SVM"
+```
+
+## Extract Data 
+```{r}
+
+MA_100_feat_exp_multi_list_test_1<-as.data.frame(MA_100_feat_exp_multi_list_test[[1]])
+
+MA_100_feat_exp_multi_classbal_list_train_1<-as.data.frame(MA_100_feat_exp_multi_classbal_list_train[[1]])
+
+MA_100_feat_exp_multi_classbal_list_NA_PT144_1<-as.data.frame(MA_100_feat_exp_multi_classbal_list_NA_PT144[[1]])
+
+MA_100_feat_exp_multi_classbal_list_NA_PT48_1<-as.data.frame(MA_100_feat_exp_multi_classbal_list_NA_PT48[[1]])
+
+
+
+# Combined 
+
+
+temp1<-rbind(MA_100_feat_exp_multi_list_test_1, MA_100_feat_exp_multi_classbal_list_train_1)
+temp2<-rbind(MA_100_feat_exp_multi_classbal_list_NA_PT144_1, MA_100_feat_exp_multi_classbal_list_NA_PT48_1)
+
+TV_prediction_Boot_ALL<-rbind(temp1, temp2)
+
+rm(MA_100_feat_exp_multi_list_test,
+   MA_100_feat_exp_multi_classbal_list_train,
+   MA_100_feat_exp_multi_classbal_list_NA_PT144, 
+   MA_100_feat_exp_multi_classbal_list_NA_PT48 )
+
+
+```
+
+
+
+
+## PT Specific FEAT and MBIO data 
+```{r}
+
+# Select PT IDs for Testing and Training -----------
+
+test_PT48<-unique(test_boot10_pt_ID_per_iteration[[1]]$pt_ID)
+
+train_PT144<-unique(train_boot10_pt_ID_per_iteration[[1]]$pt_ID)
+
+rm(test_boot10_pt_ID_per_iteration, train_boot10_pt_ID_per_iteration, train_boot10_MA_100, test_boot10_MA_100, test_boot10_Master_analysis, train_boot10_Master_analysis)
+
+# Feat/Prot DATA -----------------------------------
+ 
+# Training Pts (144)
+feat_train_pts<-subset( df_hp3_pro_dat_select_tran, rownames(df_hp3_pro_dat_select_tran) %in% train_PT144)
+feat_train_pts <- feat_train_pts[train_PT144, ]
+
+# Testing PTs (48)
+feat_test_pts<-subset( df_hp3_pro_dat_select_tran, rownames(df_hp3_pro_dat_select_tran) %in% test_PT48)
+feat_test_pts <- feat_test_pts[test_PT48, ]
+
+
+# MBio DATA -----------------------------------
+ 
+# Training Pts (144)
+mbio_train_pts<-subset( df_mbiocomp_dat_pres_pop_trans, rownames(df_mbiocomp_dat_pres_pop_trans) %in% train_PT144)
+mbio_train_pts <- mbio_train_pts[train_PT144, ]
+
+# Testing PTs (48)
+mbio_test_pts<-subset( df_mbiocomp_dat_pres_pop_trans, rownames(df_mbiocomp_dat_pres_pop_trans) %in% test_PT48)
+mbio_test_pts <- mbio_test_pts[test_PT48, ]
+
+
+
+ 
+```
+## Microbes in proteomic and FEAT pts 
+```{r}
+
+# Select Same Microbes as in PrEP Proteomics cohort ------------------
+
+
+
+ raw_shared_microbes<- c("Prevotella",               "Fusobacterium nucleatum",  
+                        "Gardnerella vaginalis"     ,"Mobiluncus mulieris"      ,
+                        "Atopobium vaginae"         ,"Lactobacillus hamsteri"   ,
+                        "Pseudomonas aeruginosa"    ,"Lactobacillus hominis"    ,
+                        "Bifidobacterium"           ,"Lactobacillus gasseri"    ,
+                       "Peptostreptococcus"        ,"undistinguishable"        ,
+                       "Pseudomonas"               ,"Lactobacillus"            ,
+                      "Pseudomonas fulva"         ,"Lactobacillus gallinarum" ,
+                       "Lactobacillus ultunensis"  ,"Lactobacillus vaginalis"  ,
+                       "Lactobacillus iners"       ,"Pseudomonas syringae"     ,
+                       "Lactobacillus crispatus"   ,"Lactobacillus helveticus" ,
+                       "Lactobacillus jensenii"    ,"Lactobacillus taiwanensis")
+                      
+
+```
+
+
+## Define Fxn - Correlate FEAT ~ mBio x LINCS CD 
+```{r}
+
+ run_raw_corr_prediction <- function(
+  mbiocomp_data,
+  FEAT_data,
+  lincs_data,
+  selected_features,
+  svm_model
+) {
+  
+  # ------------------------------------------------------------
+  # Prep - Calculate Participant Correlation
+  # ------------------------------------------------------------
+  
+  input2_loop_mbiocomp <- mbiocomp_data
+  input1_loop_FEAT <- FEAT_data
+  
+  # Spearman correlation: Microbes x Host feat
+  microbes_vs_feats_corr_loop <- cor(
+    input2_loop_mbiocomp,
+    input1_loop_FEAT,
+    method = "spearman"
+  )
+  
+  microbes_vs_feats_corr_loop <- as.data.frame(
+    microbes_vs_feats_corr_loop
+  )
+  
+  # Transpose and calculate Tenofovir correlation
+  microbes_vs_feats_corr_loop_trans <- as.data.frame(
+    base::t(microbes_vs_feats_corr_loop)
+  )
+  
+  TV_microbe_feat_corr_loop <- cor(
+    microbes_vs_feats_corr_loop_trans,
+    y = lincs_data,
+    method = "spearman"
+  )
+  
+  TV_microbe_feat_corr_loop <- as.data.frame(
+    TV_microbe_feat_corr_loop
+  )
+  
+  # Create Master correlation dataframe
+  Master_raw <- cbind(
+    TV_microbe_feat_corr_loop,
+    microbes_vs_feats_corr_loop
+  )
+  
+  Master_raw_copy <- Master_raw
+  
+  # Retain feat columns
+  col <- which(colnames(Master_raw) == "A2M")
+  
+  
+  Master_raw_feat<-Master_raw[,col:ncol(Master_raw)]
+  
+  if( col == 2 && (ncol(input1_loop_FEAT)+1 == ncol(Master_raw)) ){
+    
+  Master_raw_temp<-as.data.frame(Master_raw[,1])
+  
+  colnames(Master_raw_temp)[1]<-"tenofovir"
+  } else {
+    
+    stop(
+      "There be an issue with the col when making the Master_raw and which col is defined as A2M"
+    )
+  }
+  
+  # Add structural columns
+  Master_raw_temp$Microbes <- rownames(Master_raw_feat)
+  Master_raw_temp$TV_state <- rep(
+    NA,
+    nrow(Master_raw_temp)
+  )
+  Master_raw_temp$TV_Mic_iteration <- rep(
+    "raw-corr",
+    nrow(Master_raw_temp)
+  )
+  Master_raw_temp$MvG_iteration <- rep(
+    "raw-corr",
+    nrow(Master_raw_temp)
+  )
+  
+  Master_raw_temp <- Master_raw_temp %>%
+    dplyr::select(
+      Microbes,
+      TV_state,
+      TV_Mic_iteration,
+      tenofovir,
+      MvG_iteration
+    )
+  
+  # Rejoin and clear rownames
+  Master_raw <- cbind(
+    Master_raw_temp,
+    Master_raw_feat
+  )
+  
+  rownames(Master_raw) <- NULL
+  
+  
+  # ------------------------------------------------------------
+  # Multiply feat Expression x Microbe-feat Correlation
+  # ------------------------------------------------------------
+  
+  lincs_data_matrix <- as.matrix(lincs_data)
+  
+  feat_col_index_start <- which(
+    colnames(Master_raw) == "A2M"
+  )
+  
+  feat_col_index_end <- which(
+    colnames(Master_raw) == "ZNF185"
+  )
+  
+  # Select feat columns and transpose
+  MA_raw_feat <- Master_raw[
+    ,
+    feat_col_index_start:feat_col_index_end
+  ]
+  
+  MA_raw_feat <- as.matrix(MA_raw_feat)
+  
+  MA_raw_feat_trans <- base::t(
+    MA_raw_feat
+  )
+  
+  # Multiply LINCS feat expression by microbe-feat correlation
+  MA_raw_feat_exp_multi_featsonly <- (
+    lincs_data_matrix[, 1] *
+      MA_raw_feat_trans
+  )
+  
+  # Transpose back
+  MA_raw_feat_exp_multi_featsonly <- base::t(
+    MA_raw_feat_exp_multi_featsonly
+  )
+  
+  # Add non-feat columns back
+  MA_raw_feat_exp_multi_featsonly <- cbind(
+    Master_raw[, 1:feat_col_index_start - 1],
+    MA_raw_feat_exp_multi_featsonly
+  )
+  
+  
+  # ------------------------------------------------------------
+  # Select Features
+  # ------------------------------------------------------------
+  
+  # Make feat names consistent
+  names(MA_raw_feat_exp_multi_featsonly) <- gsub(
+    "\\-",
+    ".",
+    names(MA_raw_feat_exp_multi_featsonly)
+  )
+  
+  selected_features <- gsub(
+    "\\-",
+    ".",
+    selected_features
+  )
+  
+  feat_index_start <- which(
+    colnames(MA_raw_feat_exp_multi_featsonly) == "A2M"
+  )
+  
+  # Columns retained for structural consistency
+  alongforride_colnames <- colnames(
+    MA_raw_feat_exp_multi_featsonly[
+      1:feat_index_start - 1
+    ]
+  )
+  
+  colnames_w_features <- c(
+    alongforride_colnames,
+    selected_features
+  )
+  
+  # Keep selected features
+  TV_prediction <- MA_raw_feat_exp_multi_featsonly %>%
+    dplyr::select(
+      dplyr::all_of(colnames_w_features)
+    )
+  
+  TV_prediction$TV_state <- factor(
+    TV_prediction$TV_state
+  )
+  
+  # Keep only TV_state and selected features for prediction
+  TV_prediction_stripped <- TV_prediction %>%
+    dplyr::select(
+      TV_state,
+      dplyr::all_of(selected_features)
+    )
+  
+  
+  # ------------------------------------------------------------
+  # Identify Microbes That Can Be Predicted
+  # ------------------------------------------------------------
+  
+  # A microbe can only be predicted if it has a value for
+  # every selected feature.
+  predictable_rows <- complete.cases(
+    TV_prediction_stripped[, selected_features, drop = FALSE]
+  )
+  
+  # Keep only microbes that have complete prediction data
+  TV_prediction_dropped <- TV_prediction_stripped[
+    predictable_rows,
+    ,
+    drop = FALSE
+  ]
+  
+  # Keep corresponding microbe names
+  predictable_microbes <- TV_prediction$Microbes[
+    predictable_rows
+  ]
+  
+  
+  # ------------------------------------------------------------
+  # Predict Only Predictable Microbes
+  # ------------------------------------------------------------
+  
+  predictions <- predict(
+    object = svm_model,
+    newdata = TV_prediction_dropped
+  )
+  
+  # Add microbe names
+  predictions_labeled <- cbind(
+    predictable_microbes,
+    as.data.frame(predictions)
+  )
+  
+  colnames(predictions_labeled)[1] <- "Microbes"
+  
+  predictions_labeled <- predictions_labeled %>%
+    mutate(
+      group = paste(
+        Microbes,
+        response,
+        sep = "_"
+      )
+    )
+  
+  # Arrange by metabolizing probability
+  predictions_labeled <- predictions_labeled %>%
+    arrange(
+      desc(prob.1)
+    )
+  
+  # Insert known relationships used in training
+
+    #insert microbe TV_states 
+                          predictions_labeled <- within(predictions_labeled, truth[Microbes == "Gardnerella vaginalis" |
+                                                                              Microbes == "Mobiluncus mulieris" |
+                                                                                Microbes == "Prevotella amnii" |
+                                                                                Microbes == "Prevotella bivia" |
+                                                                                Microbes == "Escherichia coli"] <- 1 )
+                          
+                          predictions_labeled<- within(predictions_labeled, truth[Microbes == "Lactobacillus iners" |
+                                                                              Microbes == "Lactobacillus crispatus" ]<- -1 )
+      
+  # Final prediction object
+  pred_labeled_raw_corr_Thresh50 <- predictions_labeled
+  
+  
+  # ------------------------------------------------------------
+  # Return results
+  # ------------------------------------------------------------
+  
+  return(
+    list(
+      TV_prediction = TV_prediction,
+      TV_prediction_dropped = TV_prediction_dropped,
+      predictions_labeled = predictions_labeled
+    )
+  )
+} 
+```
+
+## Define Fxn - Plot Raw pred with modular thresholds 
+```{r}
+make_final_prediction_plot <- function(
+  predictions_labeled,
+  thresh_top,
+  thresh_bot,
+  model_name ,
+  raw_shared_microbes = NULL,
+  name = NULL
+) {
+  
+  # ------------------------------------------------------------
+  # Print thresholds
+  # ------------------------------------------------------------
+  
+  print(
+    paste0(
+      "Top Classification Threshold for Meta calls: ",
+      thresh_top
+    )
+  )
+  
+  print(
+    paste0(
+      "Bottom Classification Threshold for Meta calls: ",
+      thresh_bot
+    )
+  )
+  
+  
+  # ------------------------------------------------------------
+  # Adjust Predictions
+  # ------------------------------------------------------------
+  
+  pred_labeled_FINAL <- predictions_labeled %>%
+    mutate(
+      response = case_when(
+        prob.1 >= thresh_top ~ 1,
+        prob.1 <= thresh_bot ~ -1,
+        TRUE ~ 0
+      )
+    ) %>%
+    arrange(desc(prob.1))
+  
+  
+  # ------------------------------------------------------------
+  # Data Prep for Plot
+  # ------------------------------------------------------------
+  
+  pred_lab_round <- pred_labeled_FINAL %>%
+    dplyr::select(
+      Microbes,
+      prob.1,
+      response
+    )
+  
+  # Filter to shared microbes if provided
+  if (!is.null(raw_shared_microbes)) {
+    
+    pred_lab_round <- pred_lab_round %>%
+      filter(
+        Microbes %in% raw_shared_microbes
+      )
+  }
+  
+  pred_lab_round <- pred_lab_round %>%
+    mutate(
+      response = as.factor(response)
+    )
+  
+  
+  # Define x-axis order
+  level_order <- u(pred_lab_round$Microbes)
+  
+  
+  # Specify colors
+  group_colors <- c(
+    "Nonmetabolize" = "#1e88e5",
+    "Metabolize" = "#d81b60",
+    "Indeterminate" = "grey"
+  )
+  
+  
+  # Label prediction classes
+  pred_lab_round$response <- factor(
+    pred_lab_round$response,
+    levels = c(-1, 0, 1),
+    labels = c(
+      "Nonmetabolize",
+      "Indeterminate",
+      "Metabolize"
+    )
+  )
+  
+  
+  # ------------------------------------------------------------
+  # Plot
+  # ------------------------------------------------------------
+  
+  pred_plot_FINAL <- ggplot(
+    pred_lab_round,
+    aes(
+      x = factor(
+        Microbes,
+        level = level_order
+      ),
+      y = prob.1,
+      color = response
+    )
+  ) +
+    theme_bw() +
+    ylim(-0.01, 1.01) +
+    
+    geom_jitter(
+      alpha = 0.5,
+      width = 0.2,
+      size = 2
+    ) +
+    
+    geom_hline(
+      yintercept = thresh_top,
+      linetype = "dashed",
+      color = "darkgrey"
+    ) +
+    
+    geom_hline(
+      yintercept = thresh_bot,
+      linetype = "dashed",
+      color = "darkgrey"
+    ) +
+    
+    scale_color_manual(
+      values = group_colors,
+      breaks = c(
+        "Metabolize",
+        "Indeterminate",
+        "Nonmetabolize"
+      ),
+      name = "Predicted Classification"
+    ) +
+    
+    theme(
+      plot.title = element_text(
+        hjust = 0.5,
+        vjust = 4
+      ),
+      plot.subtitle = element_text(
+        hjust = 0.5,
+        vjust = 2
+      ),
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1
+      ),
+      axis.title.x = element_text(
+        vjust = -1
+      ),
+      axis.title.y = element_text(
+        vjust = 5
+      ),
+      plot.margin = unit(
+        c(1, 1, 1, 1),
+        "cm"
+      )
+    ) +
+    
+    labs(
+      title = "Predictions",
+      subtitle = model_name
+    ) +
+    
+    xlab("Microbes") +
+    ylab("Probability of Metabolizing") +
+    
+    theme(
+      plot.caption = element_text(
+        hjust = 1,
+        vjust = 0
+      )
+    )
+  
+  
+  # ------------------------------------------------------------
+  # Save Plot adn spreadsheet 
+  # ------------------------------------------------------------
+    
+    ggplot2::ggsave(
+      paste0("rawpt_plot_", "Thresh_Top",thresh_top,"_Bot", thresh_bot ,"_", name,".pdf"),
+      pred_plot_FINAL,
+      width = 7,
+      height = 5
+    )
+    
+    openxlsx::write.xlsx(
+  pred_labeled_FINAL,
+  file = paste0("rawpt_plot_", "Thresh_Top",thresh_top,"_Bot", thresh_bot ,"_", name,"predictions_labeled.xlsx"),
+  rowNames = FALSE
+)
+    
+    
+    
+  
+  # ------------------------------------------------------------
+  # Return
+  # ------------------------------------------------------------
+
+
+  return(
+    list(
+      predictions = pred_labeled_FINAL,
+      plot = pred_plot_FINAL
+    ))
+}
+```
+### Clean env
+```{r}
+rm(predictions_labeled, predictions_sum, TV_prediction_stripped, pred_lab_round)
+```
+
+
+# **PREDICTION RAW PT DATA**- Run all subset chunks together
+
+
+```{r}
+
+
+out_pt_raw_all<-run_raw_corr_prediction(mbiocomp_data = df_mbiocomp_dat_pres_pop_trans,
+                              FEAT_data = df_hp3_pro_dat_select_tran,
+                              lincs_data = df_lincs_gene_tv_sharedgenes,
+                              selected_features = boot_10_shared_feat,
+                              svm_model = tunedSvmModel)
+```
+
+# plot
+
+```{r}
+
+
+plot_raw_all<-make_final_prediction_plot(
+  predictions_labeled = out_pt_raw_all$predictions_labeled ,
+  thresh_top= thresh_sensi_top,
+  thresh_bot=thresh_sensi_bot,
+  model_name= nameofmodel,
+  raw_shared_microbes = raw_shared_microbes,
+  name = "all"
+)
+
+    
+    
+
+```
+
+
+
+
+## **CLOSING STEPS**
+
+### Save Object Sizes ***Specify Objects***
+
+```{r}
+
+objects_created <- c("plot_raw_all"
+                    
+                      )
+
+reccord_dim <- function(objects) {
+  
+  result <- list()
+  
+  for (obj_name in objects) {
+    
+    if (exists(obj_name)) {
+      
+      obj <- get(obj_name)
+      
+      if (is.data.frame(obj) || is.matrix(obj)) {
+        
+        rows <- nrow(obj)
+        cols <- ncol(obj)
+        result[[obj_name]] <- list(rows = rows, cols = cols)
+        
+      } else {
+        
+        warning(paste("Object labeled ", obj_name, "is not a data frame or a matrix. Skipping."))
+      }
+      
+    } else {
+      
+      warning(paste("Object", obj_name, "does not exist. Skipping."))
+      
+    }
+  }
+  return(result)
+}
+
+objects_dim_list<-reccord_dim(objects_created)
+
+
+
+
+#          Summary --------------------------------------------- 
+
+print("Created Objects Summary:")
+print(objects_dim_list)
+
+
+```
+
+### Exporting and Clean Up - Part 1/2
+
+```{r}
+#           Create Output File ------------------------------------------------------
+
+
+current_output_folder<-paste0(script_name_base, "_", run_timestamp, ".Rmd")
+
+dir.create(current_output_folder)
+
+script_path_with_output_folder <- file.path(script_path_folder, 
+                                            current_output_folder)
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Executed Code ----------------------------------------------------
+
+copy_and_output_code <- function(script_path) {
+  if (file.exists(script_path)) {
+    
+    
+    if (rstudioapi::isAvailable()) {
+      try(rstudioapi::documentSave(), silent = TRUE) # New
+    }
+
+    script_content <- readLines(script_path)
+    
+    writeLines(script_content, current_output_folder)
+  } else {
+    message("Error: The specified script path does not exist.")
+  }
+}
+
+# Call the function to copy and export the code
+copy_and_output_code(script_path_current)
+
+#           Export Run Info ---------------------------------------------------------
+
+writeLines(capture.output(run_sessionInfo), "sessionInfo.txt")
+
+
+```
+
+### Exporting and Clean Up - Part 2/2 **Specify Objects**
+
+```{r}
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Objects as .rda - **SPECIFY OBJECTS**----------------------------------------------------
+
+objects_save<-c( objects_created, "objects_dim_list")
+
+                            
+save(list=objects_save,                   
+     file = "env_obj.rda")
+ 
+
+
+ 
+```
+
+### Clear Env./Re-Add featrated Objects
+
+```{r}
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Clear Environment/Re-Add featrated Objects  ------------------------------------------------------
+
+
+#clear environment
+rm(list = ls()) #USE VERY CAREFULLY ONLY ACTIVATE AT END OF PIPELINE
+# rm(list = objects_save)
+
+#readd the objects
+load("env_obj.rda")
+
+
+  ## END ---------------------------------------------------------------------
+
+
+```

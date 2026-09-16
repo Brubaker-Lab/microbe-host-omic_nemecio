@@ -1,0 +1,399 @@
+---
+title: "1_data_prep.R"
+author: "Dali_Nemecio"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+## Start ---------------------------------------------------------------------
+### Set up
+
+```{r setup, include=FALSE}
+#           rmd set up----------------------------------------
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+#           Load Library **SPECIFY**------------------------------------------------------------
+packages_needed<-c("tidyverse",
+                   "tibble", 
+                   "dplyr",
+                   "rstudioapi") 
+
+for (pkg in packages_needed){
+if ( !require(pkg, character.only = TRUE)){
+  library(pkg, character.only = TRUE)
+} 
+}
+
+#           Collect Script Info and Change To Script Directory ---------------
+
+
+#Script Directory
+script_path_current <- getSourceEditorContext()$path
+script_path_folder<-sub("/[^/]*$", "", script_path_current)
+script_name<-sub(".*/", "", script_path_current)
+script_name_base<-sub("\\..*$", "", script_name)
+
+#Change directory in all code chunks to current script location
+knitr::opts_knit$set(root.dir = script_path_folder)
+ 
+
+#           Collect Run Info------------------------------------------- 
+run_timestamp <- format(Sys.time(), "%Y_%m_%d_%H%M")
+
+run_sessionInfo<-sessionInfo()
+
+#           Shortcut Custom Functions --------------------------------------------------------
+
+
+v <- function(data) {
+  tab_name <- deparse(substitute(data))
+  View(data, title = tab_name)
+}
+
+d<-function(data){
+  dim(data)
+}
+
+l<-function(data){
+  length(data)
+}
+
+u<-function(data){
+  unique(data)
+}
+
+h<-function(data){
+  head(data)
+}
+
+t<-function(data){
+  tail(data)
+}
+
+
+```
+
+### Load Data and Objects Required
+```{r}
+# Load Data - Collect .rda files ----------------------------------------
+
+#       Find Previous Code Folder -----------------------------
+
+# Find the last slash
+last_slash <- max(gregexpr("/", script_path_folder)[[1]])
+
+# Extract the substring
+substring_after_last_slash <- substr(script_path_folder, last_slash + 1, nchar(script_path_folder))
+
+# Extract the first number
+first_number <- regmatches(substring_after_last_slash, regexpr("[0-9]+", substring_after_last_slash))
+
+# Convert the first number to an integer and subtract 1
+new_number <- as.integer(first_number) - 1
+
+# Construct the new path
+new_path <- paste0(
+  substr(script_path_folder, 1, last_slash),
+  new_number,
+  "_*"
+)
+
+# Function to find directory matching the pattern
+find_directory <- function(path_with_wildcard) {
+  
+  # Extract directory path without wildcard
+  directory_path <- dirname(path_with_wildcard)
+  
+  # List files matching the pattern
+  matching_files <- list.files(directory_path, pattern = basename(path_with_wildcard))
+  
+  # Check if any matching directory exists
+  matching_directories <- matching_files[dir.exists(file.path(directory_path, matching_files))]
+  
+  if (length(matching_directories) > 0) {
+    
+    return(file.path(directory_path, matching_directories[1]))
+    
+  } else {
+    return(NULL)
+  }
+}
+
+# Find the actual directory matching the wildcard
+rda_directory <- find_directory(new_path)
+
+#       Load .rda files  ---------------------------------
+
+# Get list of all .rda files recursively
+rda_files <- list.files(path = rda_directory, 
+                        pattern = "\\.rda$",
+                        recursive = TRUE,
+                        full.names = TRUE)
+
+# Load each .rda file
+for (file in rda_files) {
+  load(file)
+}
+
+
+#       Collect starting Envr.  ---------------------------------
+
+objects_starting<-ls()
+
+ 
+```
+
+### Check Input Object Sizes
+
+```{r}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(object_dim_list)) {
+    correct_dimensions <- object_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}
+
+```
+
+### Data Prep
+```{r}
+
+#       Exclude PrEP Treatment --------------------------------------------------
+
+#mbiocomp
+df_hp3_mbiocomp_ph_noPREP<-df_hp3_mbiocomp_ph%>%
+  filter(prep_is_1 == 0)
+
+
+#rna
+df_hp3_pro_ph_noPREP<-df_hp3_pro_ph%>%
+  filter(prep_is_1 == 0)
+
+#       Select Shared ID's (Mehp1 RNA and Microb.) ------------------------------------------------------
+
+
+
+#determine similar IDs
+shared_ids<-intersect(df_hp3_mbiocomp_ph_noPREP$longid, df_hp3_pro_ph_noPREP$longid)
+
+#find columns - w/ shared ID
+mbiocomp_dat_select_ID<-df_hp3_mbiocomp_dat%>%
+  select(colnames(df_hp3_mbiocomp_dat[1]), all_of(shared_ids))
+
+
+
+#proteomics
+df_hp3_pro_dat_select<-df_hp3_pro_dat%>%
+                        select(colnames(df_hp3_pro_dat[1]), all_of(shared_ids))
+
+
+#       Remove missing microbes -------------------------------------------------
+
+mbiocomp_dat_rowname <-mbiocomp_dat_select_ID%>%
+                                 column_to_rownames("Microbe")
+
+
+#remove rows with zeros, add back rownames as column
+mbiocomp_dat_pres_pop<-filter_all(mbiocomp_dat_rowname, any_vars(. != 0))%>%
+  rownames_to_column(., "Microbe")
+
+
+#mbiocomp Transposed
+mbio_mic<- mbiocomp_dat_pres_pop$Microbe
+
+df_mbiocomp_dat_pres_pop_trans<-as.data.frame( base::t(mbiocomp_dat_pres_pop[,-1]) )
+
+colnames(df_mbiocomp_dat_pres_pop_trans)<-mbio_mic 
+
+#       Retain Shared Genes/proteins (Mehp3 proteomics and LINCS) -------------------------------
+
+#pull shared gene names 
+shared_genes<-intersect(df_lincs_gene_tv$...1 , df_hp3_pro_dat$GeneName) 
+# using full cellline list as reference because orientation (i.e gene names listed in a column) is the same between both sheets 
+
+# retain shared genes in LINCs
+df_lincs_gene_tv_sharedgenes<-df_lincs_cp_mean_tv%>%
+  select(all_of(shared_genes))
+
+#transpose 
+df_lincs_gene_tv_sharedgenes<-data.frame(base::t(df_lincs_gene_tv_sharedgenes)) #transposed
+
+colnames(df_lincs_gene_tv_sharedgenes)[1]<-df_lincs_cp_mean_tv[1,1] 
+
+#proteomics retain shared genes
+df_hp3_pro_dat_select_sharedgenes<-df_hp3_pro_dat_select%>%
+                                       filter(GeneName %in% shared_genes)
+
+#Transposed
+pro_gene<-df_hp3_pro_dat_select_sharedgenes$GeneName
+df_hp3_pro_dat_select_tran<-as.data.frame(base::t(df_hp3_pro_dat_select_sharedgenes[,-1]))
+colnames(df_hp3_pro_dat_select_tran)<-pro_gene
+df_hp3_pro_dat_select_tran<-as.data.frame(df_hp3_pro_dat_select_tran)
+
+
+```
+
+
+### Save Object Sizes ***Specify Objects***
+```{r}
+
+
+objects_created <- c("df_hp3_pro_dat_select_tran",
+                     "df_lincs_gene_tv_sharedgenes",
+                     "df_mbiocomp_dat_pres_pop_trans")
+
+reccord_dim <- function(objects) {
+  
+  result <- list()
+  
+  for (obj_name in objects) {
+    
+    if (exists(obj_name)) {
+      
+      obj <- get(obj_name)
+      
+      if (is.data.frame(obj) || is.matrix(obj)) {
+        
+        rows <- nrow(obj)
+        cols <- ncol(obj)
+        result[[obj_name]] <- list(rows = rows, cols = cols)
+        
+      } else {
+        
+        warning(paste("Object labeled ", obj_name, "is not a data frame or a matrix. Skipping."))
+      }
+      
+    } else {
+      
+      warning(paste("Object", obj_name, "does not exist. Skipping."))
+      
+    }
+  }
+  return(result)
+}
+
+objects_dim_list<-reccord_dim(objects_created)
+
+
+
+#          Summary --------------------------------------------- 
+cat("There are ** ", length(shared_ids), " ** unique patient IDs and ** ", length(shared_genes), " ** shared genes found between input RNA and mbiocomp datasets.\n", "CREATED OBJECT DIMENSIONS AS FOLLOWS : \n")
+
+print(objects_dim_list)
+
+```
+
+
+### Exporting and Clean Up - Part 1/2
+```{r}
+#           Create Output File ------------------------------------------------------
+
+
+current_output_folder<-paste0(script_name_base, "_", run_timestamp, ".Rmd")
+
+dir.create(current_output_folder)
+
+script_path_with_output_folder <- file.path(script_path_folder, 
+                                            current_output_folder)
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Executed Code ----------------------------------------------------
+
+copy_and_output_code <- function(script_path) {
+  if (file.exists(script_path)) {
+    
+    rstudioapi::documentSave()
+    
+    script_content <- readLines(script_path)
+    
+    writeLines(script_content, current_output_folder)
+  } else {
+    message("Error: The specified script path does not exist.")
+  }
+}
+
+# Call the function to copy and export the code
+copy_and_output_code(script_path_current)
+
+#           Export Run Info ---------------------------------------------------------
+
+writeLines(capture.output(run_sessionInfo), "sessionInfo.txt")
+
+```
+
+
+### Exporting and Clean Up - Part 2/2 **Specify Objects**
+```{r}
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Objects as .rda - **SPECIFY OBJECTS**----------------------------------------------------
+
+objects_save<-c( objects_created, "objects_dim_list")
+
+                            
+save(list=objects_save,                   
+     file = "env_obj.rda")
+
+
+ 
+```
+
+### Clear Env./Re-Add Generated Objects
+```{r}
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Clear Environment/Re-Add Generated Objects  ------------------------------------------------------
+
+
+#clear environment
+rm(list = ls()) #USE VERY CAREFULLY ONLY ACTIVATE AT END OF PIPELINE
+# rm(list = objects_save)
+
+#readd the objects
+load("env_obj.rda")
+
+
+```
+
+
+
+# End ---------------------------------------------------------------------
+
+

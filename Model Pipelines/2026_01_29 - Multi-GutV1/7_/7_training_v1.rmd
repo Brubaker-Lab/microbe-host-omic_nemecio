@@ -1,0 +1,2180 @@
+---
+title: "multi_drug_svm"
+author: "Dali_Nemecio"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+FYI: main code takes about <1hr to run!!! 
+
+## Start ---------------------------------------------------------------------
+
+# MAC SET UP ------------
+```{r , include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up
+```{r}
+#           Load Library **SPECIFY**------------------------------------------------------------
+packages_needed<-c("knitr","readr",
+                   "tidyverse",
+                   "tibble", 
+                   "dplyr",
+                   "rstudioapi","caret",
+                   "kernlab", "measures", "PRROC", "mlr", 
+                   "tidyverse") 
+
+for (pkg in packages_needed){
+if ( !require(pkg, character.only = TRUE)){
+  library(pkg, character.only = TRUE)
+} 
+}
+
+#           Collect Script Info and Change To Script Directory ---------------
+
+
+#Script Directory
+script_path_current <- getSourceEditorContext()$path
+script_path_folder<-sub("/[^/]*$", "", script_path_current)
+script_name<-sub(".*/", "", script_path_current)
+script_name_base<-sub("\\..*$", "", script_name)
+
+#Change directory in all code chunks to current script location
+knitr::opts_knit$set(root.dir = script_path_folder)
+ 
+
+#           Collect Run Info------------------------------------------- 
+run_timestamp <- format(Sys.time(), "%Y_%m_%d_%H%M")
+
+run_sessionInfo<-sessionInfo()
+
+```
+
+## Shortcuts
+```{r}
+source("/Users/dalinemecio/Documents/1_Rotations/Brubaker/R/x_smaller_folders/short_cuts/short_cuts.R")
+```
+
+## Load Data and Objects Required
+```{r}
+# Load Data - Collect .rda files ----------------------------------------
+
+#       Find Previous Code Folder -----------------------------
+
+# Find the last slash
+last_slash <- max(gregexpr("/", script_path_folder)[[1]])
+
+# Extract the substring
+substring_after_last_slash <- substr(script_path_folder, last_slash + 1, nchar(script_path_folder))
+
+# Extract the first number
+first_number <- regmatches(substring_after_last_slash, regexpr("[0-9]+", substring_after_last_slash))
+
+# Convert the first number to an integer and subtract 1
+new_number <- as.integer(first_number) - 1
+
+# Construct the new path
+new_path <- paste0(
+  substr(script_path_folder, 1, last_slash),
+  new_number,
+  "_*"
+)
+
+# Function to find directory matching the pattern
+find_directory <- function(path_with_wildcard) {
+  
+  # Extract directory path without wildcard
+  directory_path <- dirname(path_with_wildcard)
+  
+  # List files matching the pattern
+  matching_files <- list.files(directory_path, pattern = basename(path_with_wildcard))
+  
+  # Check if any matching directory exists
+  matching_directories <- matching_files[dir.exists(file.path(directory_path, matching_files))]
+  
+  if (length(matching_directories) > 0) {
+    
+    return(file.path(directory_path, matching_directories[1]))
+    
+  } else {
+    return(NULL)
+  }
+}
+
+# Find the actual directory matching the wildcard
+rda_directory <- find_directory(new_path)
+
+#       Load .rda files  ---------------------------------
+
+# Get list of all .rda files recursively
+rda_files <- list.files(path = rda_directory, 
+                        pattern = "\\.rda$",
+                        recursive = TRUE,
+                        full.names = TRUE)
+
+# Load each .rda file
+for (file in rda_files) {
+  load(file)
+}
+
+#       Check Object Sizes by hand--------------------------
+
+# d(boot10_Master_analysis) 5400 9456
+
+#       Collect starting Envr.  ---------------------------------
+
+objects_starting<-ls()
+
+```
+
+
+## Check Input Object Sizes
+```{r}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+
+
+# MAIN ------------------------------------------------------
+# Set Seed
+```{r}
+set.seed(2026)
+```
+
+# Define Functions 
+```{r}
+# Prepare and strip data for MLR functions ----------
+
+prep_mlr<-function(df, featvec, statecol){
+  
+  
+# col name consistency - gene col names in dataframe 
+    names(df)<-gsub("\\-",".",names(df))
+    
+
+# col name consistency - Gene col names featvector
+    featvec<-gsub("\\-",".",featvec)
+
+    #desired col names in training data
+    alongforride_colnames<-colnames(df[1:6])
+    
+    colnames_w_features<- c(alongforride_colnames, featvec)
+   
+  # Filter known classes using dynamic column name
+  DF_known <- df %>%
+    dplyr::filter(.data[[statecol]] %in% c(-1, 1)) %>%
+    dplyr::select(all_of(colnames_w_features))
+
+  # Convert target to factor safely
+  DF_known[[statecol]] <- factor(DF_known[[statecol]], levels = c( 1, -1))
+
+  # Strip down to target + features
+  out_stripped <- DF_known %>%
+    dplyr::select(all_of(c(statecol, featvec)))
+
+  # Diagnostics
+  print(paste0("Dimensions of entering df: ", dim(df)[1], " x ", dim(df)[2]))
+  print(paste0("Dimensions of output df: ", dim(out_stripped)[1], " x ", dim(out_stripped)[2]))
+
+  print("Count of drug metabolism state in out data:")
+  print(table(out_stripped[[statecol]]))
+
+  return(out_stripped)
+  
+}
+
+# Generate Conf Matr ----------
+
+conf_mat<-function(df, thresh = NULL ){
+  
+  
+# Comment on Threshold  
+if(!is.null(thresh)){
+  
+df<-df%>%mutate(response = ifelse( prob.1 >= thresh, 1, -1))
+
+print(paste0("Adjusted Threshold, positive class defined by :", thresh))
+
+}else{
+  
+  check_pos_thresh(df)
+  
+}   
+  
+# Prep for Confusion Matrix ---------------
+  
+  df<-df%>%
+      mutate(
+        truth    = factor(truth, levels = c(1, -1)),
+        response = factor(response, levels = c(1, -1))
+      )
+        
+# Make Confusion Matrix -------------------
+  
+conf_ob<-confusionMatrix(data = df$response, reference = df$truth)
+
+
+# Confusion Matrix as DF --------------
+cm_df<-as.data.frame(conf_ob$table)
+
+
+cm_df<-as.data.frame(cm_df)%>%
+            rename(`response`=Prediction, 
+                               `truth`=Reference, 
+                               `n`=Freq)%>%
+            select(truth, response, n)%>%
+            mutate(order = case_when(         # Arrange rows in the order: TN, FP, FN, TP
+              truth == -1 & response == -1 ~ 1,  # TN
+              truth == -1 & response == 1  ~ 2,  # FP
+              truth == 1  & response == -1 ~ 3,  # FN
+              truth == 1  & response == 1  ~ 4   # TP
+            )) %>%
+            arrange(order) %>%
+            select(-order)  # remove helper column if you like
+
+return(cm_df)
+
+}
+
+
+# Calculate the Performance Metrics  ------------ 
+
+calc_perf<-function(df, col_label){
+
+# Prep for Confusion Matrix ---------------
+  
+  df<-df%>%
+      mutate(
+        truth    = factor(truth, levels = c(1, -1)),
+        response = factor(response, levels = c(1, -1))
+      )
+        
+# Make Confusion Matrix -------------------
+  
+conf_ob<-confusionMatrix(data = df$response, reference = df$truth)
+
+# Extract Default Calculated Metrics ---------------
+conf_perf<-as.data.frame(conf_ob$byClass)
+colnames(conf_perf)[1]<-col_label  
+
+temp<-as.data.frame(conf_ob$overall)
+colnames(temp)[1]<-col_label  
+
+met_1<-rbind(conf_perf, temp )
+
+  
+# Determine Hand Calculated Metrics ----------------------
+
+TPR  <- conf_ob$byClass["Sensitivity"]
+TNR  <- conf_ob$byClass["Specificity"]
+FPR  <- 1 - TNR
+FNR  <- 1 - TPR
+MMCE <- 1 - conf_ob$overall["Accuracy"]
+
+met_2 <- base::t(data.frame(mmce = MMCE, fpr = FPR, fnr = FNR, tpr = TPR, tnr = TNR))
+colnames(met_2)[1]<-col_label
+
+
+
+# Determine Alternative Function Calculated Metrics ----------------------
+    
+# Measure AUC 
+AUC_ROC<-measureAUC(probabilities = df$prob.1, 
+                   truth = df$truth,
+                   negative = as.character(-1), 
+                   positive = as.character(1)) # MLR Fxn 
+
+
+# Measure Area Under Precision Recall Curve 
+interest_scores<-df$prob.1[df$truth == 1]
+other_scores<-df$`prob.1`[df$truth == -1]
+au_pr_out <- PRROC::pr.curve(scores.class0 = as.numeric(interest_scores), # class of interest aka positive class aka +1 
+                       scores.class1 = as.numeric(other_scores),
+                       curve = TRUE)
+
+AUC_PR<-au_pr_out$auc.integral
+
+
+temp<-data.frame(AUC_ROC=AUC_ROC, AUC_PR=AUC_PR )
+met_3<-base::t(temp)
+colnames(met_3)[1]<-col_label
+
+
+# Clean and Return -------------------------
+metric_order <- c(
+  
+  "Precision",
+  "Accuracy",
+  "Recall",
+  "Specificity",
+  
+  "AUC_ROC", 
+  "AUC_PR", 
+
+  "mmce", 
+  "fpr", 
+  "fnr", 
+  "tpr", 
+  "tnr",
+  
+  
+  "F1",
+  "Pos Pred Value",
+  "Neg Pred Value",
+  "Sensitivity",
+  "Prevalence",
+  "Detection Rate",
+  "Detection Prevalence",
+  
+  "Kappa",
+  "Balanced Accuracy", 
+  "AccuracyLower",
+  "AccuracyUpper",
+  "AccuracyNull",
+  "AccuracyPValue",
+  "McnemarPValue"
+)
+
+
+# Collapse all Metircs into DF 
+out<-rbind(met_1, met_2, met_3)
+out <- out[metric_order, , drop = FALSE]
+
+
+# Convert NAN and NA to Zero and Round
+out<-out%>%
+  mutate(across(everything(), ~ ifelse(is.na(.) | is.nan(.), 0, .))) %>%
+  mutate(across(everything(), ~ round(., 2)))
+
+
+return(out)  
+    
+  
+  
+}
+
+# Calculate the Performance Metrics Looped ------------------------------
+
+calc_perf_multithresh<-function(df, vec){
+  
+  
+for (i in 1:l(vec)){
+  
+  cur_thresh<-vec[i]
+  col_label<-paste0("ProbThresh_", cur_thresh)
+  
+  # Adjust predictions on threshold --------------------
+  
+  df<-df%>%mutate(response = ifelse( prob.1 >= cur_thresh, 1, -1)) # predictions adjusted for threshold 
+  
+
+  # Confusion Matrix --------------
+  
+  cur_conf<-conf_mat(df, cur_thresh) # confusion matrix adjusted for threshold 
+  
+  
+  # Make list if i == 1
+  
+  if (i == 1){ list_mat<-list() }
+
+  # Collect 
+  
+  list_mat[[i]] <-cur_conf
+  names(list_mat)[i] <- col_label
+  
+# Performance Metrics -------------
+  
+  cur_perf_calc<-calc_perf(df, col_label )
+  
+  
+  # Make list if i == 1
+  if (i == 1){ build_perf<-cur_perf_calc }else{  
+  # Collect 
+  build_perf<-cbind(build_perf, cur_perf_calc) 
+  }
+  
+}
+  
+  
+  # Package to Close 
+  out<-list( build_perf, list_mat) 
+  names(out)<-c("Performance", "ConfusionMat")
+  
+  
+  return(out)
+  
+  
+  
+  
+  
+}
+
+
+# Collect the performance and confusion matrix looped per iteration on desired threshold ----------------------------
+
+calc_perf_multiiter<-function(df, thresh){
+
+          
+        for(i in 1:max(df$iter)){
+          
+        # sanity check 
+        if (l(u(df$iter)) != max(df$iter)){error("Number of iterations does not equal maximum iteration found")}
+        
+        # FIlter for iteration   
+        curr_df<-df%>%filter(iter == i)
+        
+        temp<-calc_perf_multithresh(curr_df, thresh) # the desired threshold 
+        
+        
+            
+          # Build column name
+          col_label <- paste0("iter", i, "_ProbThresh_", thresh)
+        
+          # Rename performance column
+          colnames(temp$Performance)[1] <- col_label
+        
+          # Rename confusion matrix list entry
+          names(temp$ConfusionMat)[1] <- col_label
+        
+          # Collect 
+          if(i == 1){
+            
+            build_conf <- temp
+          
+            } else {
+              
+            # collect performance 
+            build_conf$Performance <- cbind(
+              build_conf$Performance,
+              temp$Performance)
+              
+                
+            # Collect Matrix 
+            
+            build_conf$ConfusionMat[[col_label]] <- temp$ConfusionMat[[1]]
+                
+                
+        
+        
+        
+          }
+
+        }
+  
+  return(build_conf)
+  }
+
+
+# Check threshold associated with lowest probability of positive classification -----------
+
+check_pos_thresh<-function(df){
+    
+    temp<-df%>% 
+  filter(response == 1) %>%
+  arrange(desc(prob.1)) %>%
+  tail(1)
+
+ print(paste0(" Threshold lowest prob for positive class is:", temp$prob.1))
+        
+      
+
+      }
+
+
+```
+
+# Desired Pred Thresh 
+```{r}
+
+desired_prob_thresh<-0.50
+
+```
+
+# Data Prep ------------------------------
+
+## Create Training Data with Selected Features
+
+## Define Features to Select
+```{r}
+
+# Use all Top 500 Features
+      select_feats<-colnames(Master_MHG_corr_sig_train_500[4:ncol(Master_MHG_corr_sig_train_500)])
+
+```
+
+## Prep Training Data 
+```{r}
+
+# Entering Data 
+
+    drugstate_known_training<-Master_MHG_corr_sig_train_500 
+    
+
+
+
+drugstate_known_training_stripped<-prep_mlr(Master_MHG_corr_sig_train_500,
+                                     select_feats , 
+                                     "state")
+
+
+
+    
+```
+
+# CV ------------------------------------
+
+## Method Validation 
+
+Purpose is to confirm the SVM and random search tuning procedures performs well and does not over fit. This is determined from the performance metrics output immediately after this section. 
+
+### Define Task, Learner, hyperparameter search, crossvalidation strategy 
+```{r,  Define Task, Learner, hyperparameter search, crossvalidation strategy}
+
+# Define Task, Learner, hyperparameter search, cross validation strategy ----
+
+# Define task and learner ----------------------
+
+# Supervised 
+    
+    #Task
+    class_Task<-makeClassifTask(data = drugstate_known_training_stripped, 
+                              target="state", 
+                              positive = "1")                 
+    #learner 
+    svm_learner<-makeLearner("classif.svm",                          
+                           predict.type="prob", 
+                          predict.threshold = desired_prob_thresh
+                          )    
+
+# Define hyper parameter search space -------------------------------------
+# Tuning the model 
+    
+    #getParamSet("classif.svm")                                
+    
+    kernels_choice<-c("polynomial", "radial", "sigmoid")          
+    svm_ParamSpace<-makeParamSet(
+                            makeDiscreteParam("kernel", values = kernels_choice),
+                            makeIntegerParam("degree", lower = 1, upper = 3), # flexibility with hyperplane -
+                            makeNumericParam("cost", lower = 5, upper = 20),  # how much SVM should bend data to make smooth decision surface 
+                            makeNumericParam("gamma", lower = 0, upper = 2) ) # distance of influence a training point has 
+                            
+    
+
+
+# Define search procedure -------------------------------------------------
+    
+    # randomly select parameter combinations for tuning 
+    randSearch_extended<-makeTuneControlRandom(maxit=60)          
+    
+    
+    
+# Define nested cross validation strategy ---------------------------------
+# Nested CV mitigates over fitting common issue with k fold validation
+
+    # Inner CV for hyperparameter tuning ------------    
+      inner_cv<-makeResampleDesc("Holdout",                        
+                                 split = 2/3,                       
+                                 stratify.cols = "state", 
+                                 predict = "both")                 
+
+    # Outer CV for validation of hyperparamters ------------    
+                                                                  
+      outer_cv<-makeResampleDesc("CV", iters = 10, 
+                                 stratify.cols = "state")      
+
+
+
+
+# Define wrapper (learning SVM and tuning) --------------------
+      
+    svm_Wrapper<-makeTuneWrapper(
+                            learner= svm_learner,
+                            resampling = inner_cv,         
+                            par.set=svm_ParamSpace,   
+                            control = randSearch_extended  
+                              )
+      
+
+
+# Run CV with parameter tuning and record tested parameters -----------------
+    
+    svm_cv_method_val<-resample(
+                              learner = svm_Wrapper, 
+                              task = class_Task,
+                              resampling = outer_cv,      
+                              models = TRUE,              
+                              extract = getTuneResult,   
+                              measures = list(mmce,fpr, fnr, tpr, tnr, mlr::auc, timetrain))             
+                                              
+
+
+```
+
+## Method Validation Summary
+
+```{r}
+
+# Selected Metrics to View 
+
+print("Optimal hyperparameters from all iterations: ") # NEW 
+cv_hyperparam_fold_table<-getNestedTuneResultsX(svm_cv_method_val) # optimal hyperparameters per iteration
+                                # same as svm_cv_method_val$extract
+cv_hyperparam_fold_table                             
+
+cv_hyperparam_fold_list<-svm_cv_method_val$extract   # same as getNestedTuneResultsX(svm_cv_method_val)  
+
+
+```
+
+# CV Performance ---------------------------
+
+
+## Adjust Threshold for Metrics 
+```{r}
+
+# Set threshold to adjust predictions 
+svm_cv_method_val$pred <- setThreshold(svm_cv_method_val$pred, desired_prob_thresh) # KEYSTONE
+
+
+
+```
+
+
+
+## Aggregate 
+
+### *Sensitivity Point* - Calc Conf Matrix & Perf Met - Multi Thresh
+
+```{r}
+# Extract the Data -----------------------------
+
+ all_call_CV<- as.data.frame(svm_cv_method_val$pred[["data"]])
+
+
+# Execute --------------------------------
+
+
+prob_thresh_vec<-c(seq(0, 1, by = 0.05))
+
+cv_perf_confmat_allthresh<-calc_perf_multithresh(all_call_CV, prob_thresh_vec)
+
+
+
+```
+### *Sensitivity Point* - Perf Across Prob Threshs
+
+- on Aggregated/ All training data
+
+Plotting the performance metrics across difference probability thresholds to define the positive class. 
+
+```{r}
+
+### Elongate --------------------------------------
+
+# Extract the performance measures 
+cv_perf_mat_allthresh<-cv_perf_confmat_allthresh$Performance
+
+# Pivot and Filter for desired metrics 
+cv_perf_mat_allthresh$Metric<-rownames(cv_perf_mat_allthresh)
+cv_perf_mat_allthresh<-cv_perf_mat_allthresh%>%select(Metric, everything())
+
+desired_metrics<-c("Precision", "Accuracy", "Recall", "Specificity")
+
+enter<-tidyr::pivot_longer(cv_perf_mat_allthresh,
+               cols=  ProbThresh_0:ProbThresh_1, 
+               names_to = "ProbThresh", 
+               values_to="value")%>%
+  
+        mutate(ProbThresh = gsub("ProbThresh_", "", ProbThresh))%>%
+        mutate(Metric = factor(Metric, 
+                           levels = desired_metrics))%>% # Make Metric a factor with this order 
+        filter(Metric %in% desired_metrics)%>%
+        mutate(value = as.numeric(value))   
+
+
+### Plot ----------------------------------------------
+# Selections --------------------------
+
+# Desired Thresholds for Prob Assessment 
+selected_points<-seq(0,1, by = 0.1)
+
+# Desired Performance Metrics to show 
+select_metric<- c("Precision", 
+                  #"Accuracy", 
+                  "Recall" #, 
+                  #"Specificity"
+                  )
+
+# colors 
+gp_colors<- c( Precision= "#FFB000", 
+               Accuracy = "#FE6100", 
+               Recall =  "#785EF0", 
+               Specificity = "#DC267F" )
+
+# shapes 
+gp_shapes <- c(
+  Precision   = 21,
+  Accuracy    = 22,
+  Recall      = 23,
+  Specificity = 24
+)
+
+
+# Plot CV Aggg -----------------------------
+
+# Selected Performance Metrics 
+plot_cv_agg_sensi<-enter%>%
+        filter(Metric %in% all_of(select_metric), 
+               ProbThresh %in% all_of(selected_points))  %>%
+  ggplot(aes(x = ProbThresh, y = value, group = Metric, color = Metric, fill = Metric, shape=Metric)) +
+  geom_line(size = 1) +                     # colored lines
+  geom_point( size = 3) +  # points with black border
+  scale_color_manual(values = gp_colors) +    # line colors
+  scale_fill_manual(values = gp_colors) +     # point fills
+  scale_shape_manual(values = gp_shapes) + 
+  scale_y_continuous(limits= c(0,1), breaks = c(0.00, 0.20 ,0.40 ,0.60, 0.80 ,1.00) ) +             
+  ggtitle("Sensitivity Analysis on Prediction Threshold") +
+  ylab("Performance")+
+  xlab("Probability Threshold for Metabolism")+
+    labs(caption = "CV aggregated all folds")+
+  theme(
+    legend.title = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 16)
+  )
+
+
+
+
+# All Performance Metrics 
+plot_cv_agg_sensi_all<-enter%>%
+        filter( 
+               ProbThresh %in% all_of(selected_points))  %>%
+  ggplot(aes(x = ProbThresh, y = value, group = Metric, color = Metric, fill = Metric, shape=Metric)) +
+  geom_line(size = 1) +                     # colored lines
+  geom_point( size = 3) +  # points with black border
+  scale_color_manual(values = gp_colors) +    # line colors
+  scale_fill_manual(values = gp_colors) +     # point fills
+  scale_shape_manual(values = gp_shapes) + 
+  scale_y_continuous(limits= c(0,1), breaks = c(0.00, 0.20 ,0.40 ,0.60, 0.80 ,1.00) ) +             
+  ggtitle("Sensitivity Analysis on Prediction Threshold") +
+  ylab("Performance")+
+  xlab("Probability Threshold for Metabolism")+
+  labs(caption = "CV aggregated all folds")+
+  theme(
+    legend.title = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 16)
+  )
+
+
+# Produced Objects 
+
+plot_cv_agg_sensi_all
+plot_cv_agg_sensi
+
+```
+
+
+### *Sensitivity Point* - Extract Threshold based on F1 and Neg Pred. Value 
+
+
+```{r}
+
+temp<-base::t(cv_perf_confmat_allthresh$Performance)%>%
+  as.data.frame(.)%>%
+  dplyr::select("F1", "Recall", "Neg Pred Value", "Specificity", "fnr", "Balanced Accuracy", "Kappa")
+
+
+
+ # Highest Meta Threshold ---------------------------------------------
+
+# Select Highest F1 value and associated threshold 
+
+{ 
+  
+F1_high<-sort(u(temp$F1), decreasing=TRUE)[1]
+
+# Start Group Code Block 
+temp2<-temp%>%
+  dplyr::filter(F1 == F1_high)
+
+# If one threshold with highest F1 choose that threshold 
+if(nrow(temp2)==1){
+  
+  thresh_sensi_top<-rownames(temp2)%>%sub(".*_", "", .)%>%as.numeric(.)
+  
+}else{
+  
+# If multiple thresholds with highest F1, Tie breaker is Highest Recall 
+  
+  # Collect highest recall 
+  Recall_high<-sort(u(temp2$Recall), decreasing=TRUE)[1]
+
+  #Find Frequency of Highest recall 
+  #t3<-as.data.frame(table(temp2$Recall))%>%
+   #     arrange(desc((Var1)))
+  
+  #Freq_Recall_high<-t3$Freq[1]
+  
+  
+  #Filter for highest recall 
+  temp3<-temp2%>%dplyr::filter(Recall == Recall_high)
+    
+# If Only only thresh with highest recall select it   
+  if(nrow(temp3) ==1){
+    
+  thresh_sensi_top<-rownames(temp3)%>%sub(".*_", "", .)%>%as.numeric(.)
+
+  
+  }else{
+    
+    # pull the lowest threshold if ties between two perf metrics 
+    thresh_sensi_top<-rownames(temp3)%>%
+        sub(".*_", "", .)%>%
+        as.numeric(.)%>%
+        sort(., decreasing=FALSE)%>%
+        .[1]%>%as.numeric(.)
+    
+    print("Tie Breaker enacted for Metabolizing Threshold")
+  } 
+  
+  
+} # end of nested if statements 
+} # end of Grouped code block 
+
+
+
+ # Bottom Nonmeta Threshold ---------------------------------------------
+
+# DALI left off on converting this to reflect bottom requirements consider includng tie breaker for bottom performance 
+
+# Select Highest F1 value and associated threshold 
+
+{
+  
+NPV_high<-sort(u(temp$`Neg Pred Value`), decreasing=TRUE)[1]  # Start Group Code Block 
+
+temp2<-temp%>%
+  dplyr::filter(`Neg Pred Value` == NPV_high)
+
+# If one threshold with highest F1 choose that threshold 
+if(nrow(temp2)==1){
+  
+  thresh_sensi_bot<-rownames(temp2)%>%sub(".*_", "", .)%>%as.numeric(.)
+
+  
+}else{
+  
+# If multiple thresholds with highest F1, Tie breaker is Highest Recall 
+  
+  # Collect highest recall 
+ Spec_high<-sort(u(temp2$Specificity), decreasing=TRUE)[1]
+
+  #Find Frequency of Highest recall 
+  #t3<-as.data.frame(table(temp2$Recall))%>%
+   #     arrange(desc((Var1)))
+  
+  #Freq_Recall_high<-t3$Freq[1]
+  
+  
+  #Filter for highest recall 
+  temp3<-temp2%>%dplyr::filter(Specificity == Spec_high)
+    
+# If Only only thresh with highest recall select it   
+  if(nrow(temp3) ==1){
+    
+  thresh_sensi_bot<-rownames(temp3)%>%sub(".*_", "", .)%>%as.numeric(.)
+
+  
+  
+  }else{
+    
+    # pull the highest threshold if ties between two perf metrics 
+    thresh_sensi_bot<-rownames(temp3)%>%
+        sub(".*_", "", .)%>%
+        as.numeric(.)%>%
+        sort(., decreasing=TRUE)%>%
+        .[1]%>%as.numeric(.)
+    
+    print("Tie Breaker enacted for Nonmetabolizing Threshold")
+  
+  } 
+  
+  
+} # end of nested if statements 
+} # end of Grouped code block 
+
+
+
+
+
+
+
+# Produced Objects 
+thresh_sensi_top # Based on F1 and/or Recall From Class. Seni. Analysis 
+thresh_sensi_bot # Based on Negative Predictive Value and/or Specificity from Class seni analysis 
+
+# Printed Summary 
+
+print(paste0("Sensitivity Analysis on Classification threshold found top Meta. thresh: ", thresh_sensi_top))
+print(paste0("Sensitivity Analysis on Classification threshold found botton non Meta. thresh: ", thresh_sensi_bot))
+```
+
+### Extract Perf. and ConfMat on Desired Thresh 
+
+Choose matrix with prob threshold defined at the start labeled as desired_prob_thresh
+
+```{r}
+
+# name of Col with desired threshold
+namedcol<-paste0("ProbThresh_", desired_prob_thresh)
+
+# Performance from Aggregated Folds with desired threshold
+cv_perf_agg<-cv_perf_confmat_allthresh$Performance%>%select(all_of(namedcol))
+
+# Confusion Matrix from Aggregated Folds with desired Threshold 
+
+cv_confmat_agg<- cv_perf_confmat_allthresh$ConfusionMat[[namedcol]]
+
+# Obtained Objects 
+print(paste0("Aggregated Crossvalidation Performance (Threshold of ", desired_prob_thresh, ")"))
+
+cv_perf_agg
+
+print(paste0("Aggregated Crossvalidation Confusion Matrix (Threshold of ", desired_prob_thresh, ")"))
+
+cv_confmat_agg
+```
+
+
+
+
+
+### Performance curves
+
+```{r}
+
+# Collect Number of Cases per State for Plot 
+
+n_pos_cv<-sum(drugstate_known_training_stripped$state == 1 )
+n_neg_cv<-sum(drugstate_known_training_stripped$state == -1 )
+
+
+samplecount_cv<-paste0("n: (+1) ", n_pos_cv,", (-1) ", n_neg_cv)
+
+
+# Performance Curves - Aggregated ----------------------------------
+
+thresh_vs_perf_agg<-generateThreshVsPerfData(obj = svm_cv_method_val$pred, # Already modified for desired threshold 
+                                             measures = list(mmce,fpr, fnr, tpr, tnr, ppv),
+                                             gridsize = 100L,
+                                             aggregate = TRUE # plot performance of all iterations aggregated
+                                             )
+
+# False Negative Rate vs True Negative Rate 
+
+ft_neg_agg_cv<-plotROCCurves(obj = thresh_vs_perf_agg,
+              measures = list(fnr, tnr) )+  # Add points
+              ggtitle(paste0("False Negative Rate vs True Negative Rate, CV Performance, ",samplecount_cv)) +
+              theme(plot.title = element_text(size = 10))
+
+# ROC - Sensitivity and Specificity curve 
+
+ft_pos_agg_cv<-plotROCCurves(obj = thresh_vs_perf_agg,
+              measures = list(fpr, tpr) )+  # Add points
+               ggtitle(paste0("ROC - Sensitivity-Specifificty Curve, CV Performance, ",samplecount_cv))+
+                 theme(plot.title = element_text(size = 10))
+# Precision/Recall
+
+prec_recall_agg_cv<-plotROCCurves(thresh_vs_perf_agg, measures = list(tpr, ppv), diagonal = FALSE)+  # Add points
+                    ggtitle(paste0("Precision-Recall Curve, CV Performance, ",samplecount_cv))+
+                    theme(plot.title = element_text(size = 10))
+
+
+```
+
+
+
+## Per Iteration
+### Sanity Check 
+```{r}
+
+  temp<-all_call_CV%>% 
+  filter(response == 1) %>%
+  arrange(desc(prob.1)) %>%
+  tail(1)
+  
+print(paste0("No Threshold Adjustment, lowest prob for positive class is:", temp$prob.1))
+        
+```
+
+### Generate Per iteration conf mat at desired thresh 
+
+Using Desired threshold calculate the performance per iteration 
+
+```{r}
+
+# Per iteration Confusion Matrix -------------
+
+cv_iter_result_desirethresh<-calc_perf_multiiter(all_call_CV, desired_prob_thresh)
+
+cv_iter_result_desirethresh
+
+```
+
+
+
+### Extract Perf. and ConfMat on Desired Thresh  
+
+Choose matrix with prob threshold defined at the start labeled as desired_prob_thresh
+
+```{r}
+
+# name of Col with desired threshold
+namedcol<-paste0("ProbThresh_", desired_prob_thresh)
+
+# Performance per iteration with desired threshold
+cv_perf_per_iter<-cv_iter_result_desirethresh$Performance
+
+# Confusion Matrix fper iteration with desired Threshold 
+cv_confmat_per_iter<- cv_iter_result_desirethresh$ConfusionMat
+
+
+# Obtained Objects 
+print(paste0("Per iteration Performance (Threshold of ", desired_prob_thresh, ")"))
+
+cv_perf_per_iter
+
+print(paste0("Per iteration Confusion Matrix (Threshold of ", desired_prob_thresh, ")"))
+
+cv_confmat_per_iter
+
+```
+
+
+
+### Performance curves
+```{r}
+
+
+# ROC curve from predictions - Per iteration ----------------------------------
+
+thresh_vs_perf<-generateThreshVsPerfData( obj = svm_cv_method_val$pred, 
+                                              measures = list(mmce,fpr, fnr, tpr, tnr, ppv), 
+                                              gridsize = 100L, 
+                                              aggregate = FALSE # plot performance of individual iterations 
+                                          )
+
+# False Negative Rate vs True Negative Rate 
+
+
+ft_neg_cv<-plotROCCurves(obj = thresh_vs_perf,
+                          measures = list(fnr, tnr) )+  # Add points
+  ggtitle(paste0("False Negative Rate vs True Negative Rate, CV Performance, ",samplecount_cv) )+
+  theme(plot.title = element_text(size = 10))
+
+
+
+# ROC - Sensitivity and Specificity 
+
+ft_pos_cv<-plotROCCurves(obj = thresh_vs_perf,
+                          measures = list(fpr, tpr) )+  # Add points
+  ggtitle(paste0("ROC - Sensitivity-Specifificty Curve, Trained on:\n, CV Performance, ", samplecount_cv) )+
+  theme(plot.title = element_text(size = 10))
+
+
+# Precision/Recall
+
+prec_recall_cv<-plotROCCurves(thresh_vs_perf, measures = list(tpr, ppv), diagonal = FALSE)+  # Add points
+                    ggtitle(paste0("Precision-Recall Curve, Trained on:\n, CV Performance, ", samplecount_cv) )+
+                    theme(plot.title = element_text(size = 10))
+
+# Plot - Performance vs Threshold
+
+ThreshvsPerf_plots_iter_cv<-plotThreshVsPerf(thresh_vs_perf)
+
+
+```
+
+
+
+
+## Results Table 
+inhereted 
+```{r}
+
+# print("Method Validation (hyperparm) aggregated validation results from all folds: ")
+# perf_meas_agg_cvWithTuning<-as.data.frame(svm_gene_cvWithTuning$aggr) # aggregated test result all iterations
+# perf_meas_agg_cvWithTuning<-base::t(perf_meas_agg_cvWithTuning)
+# perf_meas_agg_cvWithTuning
+
+# print("Method Validation (hyperparm) aggregated validation performance from all folds: ")
+# perf_meas_iter_cvWithTuning<-svm_gene_cvWithTuning$measures.test 
+
+# mmce, false pos reate and false neg rate for all 10 iterations
+
+    
+# perf_meas_iter_cvWithTuning$aucpr<-AUCPR_df_iter$AUCPR # combine, assume same order
+# perf_meas_iter_cvWithTuning
+
+```
+
+## Results Agg and Iter Plots
+```{r}
+
+# Aggregated ---------
+
+# Sensitivity Analysis - Performance across multiple thresholds 
+plot_cv_agg_sensi
+
+plot_cv_agg_sensi_all
+
+
+# Aggregated performance plots (on desired thresh)
+ft_neg_agg_cv
+
+ft_pos_agg_cv
+
+prec_recall_agg_cv
+
+
+# Per Iteration ---------
+
+# Aggregated performance plots (on desired thresh)
+
+ft_neg_cv
+
+ft_pos_cv
+
+prec_recall_cv
+
+ThreshvsPerf_plots_iter_cv
+
+```
+
+
+
+## Results Summary
+```{r}
+
+print(paste0("Sensivity point performance across multi thresholds on aggregated training data"))
+
+cv_perf_confmat_allthresh$Performance
+
+
+print(paste0("Confusion Matrix across multi thresholds on aggregated training data"))
+
+cv_perf_confmat_allthresh$ConfusionMat
+
+```
+
+```{r}
+
+
+# Obtained Objects 
+print(paste0("Aggregated Crossvalidation Performance (Threshold of ", desired_prob_thresh, ")"))
+
+cv_perf_agg
+
+print(paste0("Aggregated Crossvalidation Confusion Matrix (Threshold of ", desired_prob_thresh, ")"))
+
+cv_confmat_agg
+
+
+```
+
+```{r}
+
+
+# Obtained Objects 
+print(paste0("Per iteration Performance (Threshold of ", desired_prob_thresh, ")"))
+
+cv_perf_per_iter
+
+print(paste0("Per iteration Confusion Matrix (Threshold of ", desired_prob_thresh, ")"))
+
+cv_confmat_per_iter
+```
+
+
+
+# Model Training --------------------------------
+
+Move forward with using the parameter tuning method on our training data since we know it is not overfit and performs well. Yes we are re-finding the best hyperparameters again but using the same tuning parameters again, only this time they will be applied to a model to train. 
+
+```{r}
+
+# Run the tuning procedure and return best combo of parameters 
+    tunedSvmPars<-tuneParams(learner= svm_learner,     
+                              task= class_Task,
+                              resampling = inner_cv,
+                              par.set= svm_ParamSpace,   
+                              control = randSearch_extended
+                                )
+
+    print("Determined Hyperparameters :")
+    tunedSvmPars$x
+    # generateHyperParsEffectData(tunedSvmPars) should get table about hyperparamter tuning see reference 
+    
+  
+# Apply the hyperparameters 
+    tunedSvm_sethyper<-setHyperPars(svm_learner, 
+                            par.vals = tunedSvmPars$x)   
+
+# THE TRAINED MODEL
+# Purpose of train() is to fit the parameters but it does not know how we want to measure preformance ( accuracy, AUC, Precision) nor on which data set. This is why we use predict() downstream 
+
+      tunedSvmModel<-mlr::train(tunedSvm_sethyper, class_Task) # Keystone 
+                                                       
+    
+# The Trained Model Performance Metrics
+    
+    as.data.frame(tunedSvmPars$opt.path)
+
+```
+# Results 
+```{r}
+
+# Hyperparameters
+print( paste0("Determined Hyperparameters for Model Training: ") ) # 
+print(tunedSvmPars$x)
+
+
+# Model 
+print( paste0("Trained Model: " ) ) # 
+model_overview<-capture.output({tunedSvmModel})
+print(model_overview)
+
+
+
+```
+
+# Learning Curves ----------------------
+## Define Model and Learner 
+```{r}
+# Used and defined in the CV ------------------ 
+
+# Define outer CV for Learning Curve 
+    
+          outer_cv_lc <- makeResampleDesc("CV", iters = 10, 
+                                              stratify.cols = "state", predict = "both")
+# Learner
+    
+          svm_learner_opthyper<-makeLearner("classif.svm",                         
+                                              predict.type="prob", 
+                                            predict.threshold = desired_prob_thresh, # want performance metrics for the desired threshold
+                                              par.vals = tunedSvmPars$x )   # OPTIMAL HYPERPARAMTERS for model training                
+ 
+          
+```
+
+
+## Generate 
+
+```{r}
+
+                                            
+# Performance metrics Aggregated 
+    
+    # ACCURACY DF -----------------------------------------------
+
+acc_agg<- generateLearningCurveData(
+                            learners = svm_learner_opthyper, # Can also be list c(svm_gene_tv_mhg, svm_gene_tv-mhp)
+                            task = class_Task,
+                            percs = seq(0.1, 1, by = 0.1), # use every 10th percent of training data each time
+                            measures = list(acc, setAggregation(acc, train.mean)),
+                            
+                            resampling = outer_cv_lc,
+                            show.info = FALSE)
+
+acc_agg
+
+    # MEAN MISCLASSIFICATION DF -----------------------------------------------
+
+
+mmce_agg<- generateLearningCurveData(
+                            learners = svm_learner_opthyper,# Can also be list c(svm_gene_tv_mhg, svm_gene_tv-mhp)
+                            task = class_Task,
+                            percs = seq(0.1, 1, by = 0.1), # use every 10th percent of training data each time
+                            measures = list(mmce, setAggregation(mmce, train.mean)),
+                            
+                            resampling = outer_cv_lc,
+                            show.info = FALSE)
+
+mmce_agg
+
+
+
+    # FALSE POSITTIVE RATE DF -----------------------------------------------
+
+
+fpr_agg<- generateLearningCurveData(
+                            learners = svm_learner_opthyper,# Can also be list c(svm_gene_tv_mhg, svm_gene_tv-mhp)
+                            task = class_Task,
+                            percs = seq(0.1, 1, by = 0.1), # use every 10th percent of training data each time
+                            measures = list(fpr, setAggregation(fpr, train.mean)),
+                            
+                            resampling = outer_cv_lc,
+                            show.info = FALSE)
+
+fpr_agg
+
+
+
+    # TRUE POSITTIVE RATE DF -----------------------------------------------
+
+
+tpr_agg<- generateLearningCurveData(
+                            learners = svm_learner_opthyper,# Can also be list c(svm_gene_tv_mhg, svm_gene_tv-mhp)
+                            task = class_Task,
+                            percs = seq(0.1, 1, by = 0.1), # use every 10th percent of training data each time
+                            measures = list(tpr, setAggregation(tpr, train.mean)),
+                            
+                            resampling = outer_cv_lc,
+                            show.info = FALSE)
+
+tpr_agg
+
+
+    # False negative RATE DF -----------------------------------------------
+
+
+fnr_agg<- generateLearningCurveData(
+                            learners = svm_learner_opthyper,# Can also be list c(svm_gene_tv_mhg, svm_gene_tv-mhp)
+                            task = class_Task,
+                            percs = seq(0.1, 1, by = 0.1), # use every 10th percent of training data each time
+                            measures = list(fnr, setAggregation(fnr, train.mean)),
+                            
+                            resampling = outer_cv_lc,
+                            show.info = FALSE)
+
+fnr_agg
+
+
+
+    # True negative RATE DF -----------------------------------------------
+
+
+tnr_agg<- generateLearningCurveData(
+                            learners = svm_learner_opthyper,# Can also be list c(svm_gene_tv_mhg, svm_gene_tv-mhp)
+                            task = class_Task,
+                            percs = seq(0.1, 1, by = 0.1), # use every 10th percent of training data each time
+                            measures = list(tnr, setAggregation(tnr, train.mean)),
+                            
+                            resampling = outer_cv_lc,
+                            show.info = FALSE)
+
+tnr_agg
+
+
+
+
+```
+
+## Graphs
+```{r}
+acc_agg_plot_withlegend<-plotLearningCurve(acc_agg, 
+                  facet = "learner" # default is "measure" but can also be "learner"
+                  ) 
+
+mmce_agg_plot_withlegend<-plotLearningCurve(mmce_agg, 
+                  facet = "learner" # default is "measure" but can also be "learner"
+                  ) 
+
+
+acc_agg_plot<-plotLearningCurve(acc_agg, 
+                  facet = "learner" # default is "measure" but can also be "learner"
+                  ) + theme(legend.position = "none")
+
+mmce_agg_plot<-plotLearningCurve(mmce_agg, 
+                  facet = "learner" # default is "measure" but can also be "learner"
+                  ) + theme(legend.position = "none")
+
+tpr_agg_plot<-plotLearningCurve(tpr_agg, 
+                  facet = "learner" # default is "measure" but can also be "learner"
+                  ) + theme(legend.position = "none")
+
+fpr_agg_plot<-plotLearningCurve(fpr_agg, 
+                  facet = "learner" # default is "measure" but can also be "learner"
+                  ) + theme(legend.position = "none")
+
+tnr_agg_plot<-plotLearningCurve(tnr_agg, 
+                  facet = "learner" # default is "measure" but can also be "learner"
+                  ) + theme(legend.position = "none")
+
+fnr_agg_plot<-plotLearningCurve(fnr_agg, 
+                  facet = "learner" # default is "measure" but can also be "learner"
+                  ) + theme(legend.position = "none")
+
+
+
+# Produced Objects ------------
+
+acc_agg_plot
+mmce_agg_plot
+tpr_agg_plot
+fpr_agg_plot
+tnr_agg_plot
+fnr_agg_plot
+
+
+```
+
+## Replot 
+```{r}
+acc_agg
+mmce_agg
+
+fpr_agg
+
+
+tpr_agg
+
+fnr_agg
+tnr_agg
+
+
+# Function to apply consistent labels and limits
+standardize_plot <- function(plot_obj) {
+    
+  # Convert to long format
+  df <- plot_obj$data%>%
+    select(-learner)
+  
+  leadcol<-names(df)[2] # Measure name
+  endcol<-names(df)[3] # Performance value 
+  
+  #long<-df %>%
+  #          pivot_longer(
+  #            cols = c(leadcol, endcol),
+  #            names_to = "Group",
+  #            values_to = "Performance"
+  #          )
+  
+   long<-df %>%
+          rename(Performance=performance, 
+                 Group=measure
+                 )
+          
+  # Optional: simplify names
+ #  long$Group <- ifelse(grepl("test", long$Group, ignore.case = TRUE), "Test", "Train")
+    
+  # Define consistent axis labels
+  x_label <- "Percentage of Training Data"
+  y_label <- "Performance"
+  
+  # Define consistent y-axis range
+  y_limits <- c(0, 1)  # adjust as needed; e.g., 0-1 for proportions
+  x_limits<- c(0,1)
+
+  out<-ggplot(long, aes( x= percentage, y= Performance, color = Group))+
+    geom_line(size=1)+
+    geom_point(size=2)+ 
+    theme_minimal() + theme(legend.position = "none")+
+    labs(x = x_label, y = y_label) +
+    coord_cartesian(ylim = y_limits, xlim = x_limits) 
+}
+
+# Apply to your plots
+acc_agg_plot <- standardize_plot(acc_agg_plot)
+mmce_agg_plot <- standardize_plot(mmce_agg_plot)
+tpr_agg_plot <- standardize_plot(tpr_agg_plot)
+fpr_agg_plot <- standardize_plot(fpr_agg_plot)
+tnr_agg_plot <- standardize_plot(tnr_agg_plot)
+fnr_agg_plot <- standardize_plot(fnr_agg_plot)
+
+
+```
+
+
+
+# Test Model -----------------------------------
+## Prep Training Data 
+```{r}
+
+# Entering Data 
+
+drugstate_known_test_stripped<-prep_mlr(Master_MHG_corr_sig_test_500,
+                                     select_feats , 
+                                     "state")
+
+
+
+```
+
+# Execute Test 
+```{r}
+
+testoutput <- predict(tunedSvmModel, newdata = drugstate_known_test_stripped)
+
+check_pos_thresh(testoutput$data)
+```
+Confirmed to have the desired threshold, inherited correctly (unlike the training section which required the setThresh and then custom metric calculations )
+
+
+# Test Performance ------------------------------------------
+
+
+### *Sensitivity Point* - Calc Conf Matrix & Perf Met - Multi Thresh
+
+```{r}
+# Extract the Data -----------------------------
+
+ all_call_test<- as.data.frame(testoutput$data)
+
+
+# Execute --------------------------------
+
+# prob_thresh_vec<-c(seq(0, 1, by = 0.5))
+# df<-all_call_test
+# i<-1
+# vec<-prob_thresh_vec
+
+
+prob_thresh_vec<-c(seq(0, 1, by = 0.05))
+
+test_perf_confmat_allthresh<-calc_perf_multithresh(all_call_test, prob_thresh_vec)
+
+
+# Produced objects 
+test_perf_confmat_allthresh
+
+
+
+```
+### *Sensitivity Point* - Perf Across Prob Threshs
+
+- on Aggregated/ All training data
+
+Plotting the performance metrics across difference probability thresholds to define the positive class. 
+
+```{r}
+
+### Elongate --------------------------------------
+
+# Extract the performance measures 
+test_perf_mat_allthresh<-test_perf_confmat_allthresh$Performance
+
+# Pivot and Filter for desired metrics 
+test_perf_mat_allthresh$Metric<-rownames(test_perf_mat_allthresh)
+test_perf_mat_allthresh<-test_perf_mat_allthresh%>%select(Metric, everything())
+
+desired_metrics<-c("Precision", "Accuracy", "Recall", "Specificity")
+
+enter<-tidyr::pivot_longer(test_perf_mat_allthresh,
+               cols=  ProbThresh_0:ProbThresh_1, 
+               names_to = "ProbThresh", 
+               values_to="value")%>%
+  
+        mutate(ProbThresh = gsub("ProbThresh_", "", ProbThresh))%>%
+        mutate(Metric = factor(Metric, 
+                           levels = desired_metrics))%>% 
+        filter(Metric %in% desired_metrics)%>%
+        mutate(value = as.numeric(value))    
+
+
+### Plot ----------------------------------------------
+# Selections --------------------------
+
+# Desired Thresholds for Prob Assessment 
+selected_points<-seq(0,1, by = 0.1)
+
+# Desired Performance Metrics to show 
+select_metric<- c("Precision", 
+                  #"Accuracy", 
+                  "Recall" #, 
+                  #"Specificity"
+                  )
+
+# colors 
+gp_colors<- c( Precision= "#FFB000", 
+               Accuracy = "#FE6100", 
+               Recall =  "#785EF0", 
+               Specificity = "#DC267F" )
+
+# shapes 
+gp_shapes <- c(
+  Precision   = 21,
+  Accuracy    = 22,
+  Recall      = 23,
+  Specificity = 24
+)
+
+
+# Plot CV Aggg -----------------------------
+
+# Selected Performance Metrics 
+plot_test_sensi<-enter%>%
+        filter(Metric %in% all_of(select_metric), 
+               ProbThresh %in% all_of(selected_points))  %>%
+  ggplot(aes(x = ProbThresh, y = value, group = Metric, color = Metric, fill = Metric, shape=Metric)) +
+  geom_line(size = 1) +                     # colored lines
+  geom_point( size = 3) +  # points with black border
+  scale_color_manual(values = gp_colors) +    # line colors
+  scale_fill_manual(values = gp_colors) +     # point fills
+  scale_shape_manual(values = gp_shapes) + 
+  scale_y_continuous(limits= c(0,1), breaks = c(0.00, 0.20 ,0.40 ,0.60, 0.80 ,1.00) ) +             
+  ggtitle("Sensitivity Analysis on Prediction Threshold") +
+  ylab("Performance")+
+  xlab("Probability Threshold for Metabolism")+
+    labs(caption = "Test data")+
+  theme(
+    legend.title = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 16)
+  )
+
+
+
+
+# All Performance Metrics 
+plot_test_sensi_all<-enter%>%
+        filter( 
+               ProbThresh %in% all_of(selected_points))  %>%
+  ggplot(aes(x = ProbThresh, y = value, group = Metric, color = Metric, fill = Metric, shape=Metric)) +
+  geom_line(size = 1) +                     # colored lines
+  geom_point( size = 3) +  # points with black border
+  scale_color_manual(values = gp_colors) +    # line colors
+  scale_fill_manual(values = gp_colors) +     # point fills
+  scale_shape_manual(values = gp_shapes) + 
+  scale_y_continuous(limits= c(0,1), breaks = c(0.00, 0.20 ,0.40 ,0.60, 0.80 ,1.00) ) +             
+  ggtitle("Sensitivity Analysis on Prediction Threshold") +
+  ylab("Performance")+
+  xlab("Probability Threshold for Metabolism")+
+  labs(caption = "Test Data")+
+  theme(
+    legend.title = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 16)
+  )
+
+
+
+```
+
+
+
+### Extract Perf. and ConfMat on Desired Thresh  
+
+Choose matrix with prob threshold defined at the start labeled as desired_prob_thresh
+
+```{r}
+
+# name of Col with desired threshold
+namedcol<-paste0("ProbThresh_", desired_prob_thresh)
+
+# Performance from  with desired threshold
+test_perf<-test_perf_confmat_allthresh$Performance%>%select(all_of(namedcol))
+
+# Confusion Matrix from with desired Threshold 
+
+test_confmat<- test_perf_confmat_allthresh$ConfusionMat[[namedcol]]
+
+
+# Obtained Objects 
+print(paste0("Test Performance (Threshold of ", desired_prob_thresh, ")"))
+
+test_perf
+
+print(paste0("Test Confusion Matrix (Threshold of ", desired_prob_thresh, ")"))
+
+test_confmat
+
+
+
+```
+
+
+
+
+
+## MLR Plot method
+
+```{r}
+
+
+# Collect --------------------------------------------------------
+
+
+n_pos_test<-sum(drugstate_known_test_stripped$TV_state == 1 )
+n_neg_test<-sum(drugstate_known_test_stripped$TV_state == -1 )
+
+
+samplecount_test<-paste0("n: (+1) ", n_pos_test,", (-1) ", n_neg_test)
+
+
+
+# Performance Curves - Aggregated ----------------------------------
+
+
+thresh_vs_perf_test<-generateThreshVsPerfData(obj = testoutput,
+                                             measures = list(mlr::mmce, mlr::acc, mlr::fpr, mlr::fnr, mlr::tpr, mlr::tnr, mlr::auc, mlr::ppv),
+                                             gridsize = 100L,
+                                             aggregate = TRUE 
+                                             )
+
+# Plot -------------------------------------------------------------
+
+
+# False Negative Rate vs True Negative Rate 
+
+ft_neg_test<-plotROCCurves(obj = thresh_vs_perf_test,
+              measures = list(fnr, tnr) )+  # Add points
+              ggtitle(paste0("False Negative Rate vs True Negative Rate, Test Performance, ", samplecount_test))+
+              theme(plot.title = element_text(size = 10))
+
+# ROC - Sensitivity and Specificity curve 
+
+ft_pos_test<-plotROCCurves(obj = thresh_vs_perf_test,
+              measures = list(fpr, tpr) )+  # Add points
+               ggtitle(paste0("ROC - Sensitivity-Specifificty Curve, Test Performance, ", samplecount_test))+
+                 theme(plot.title = element_text(size = 10))
+# Precision/Recall
+
+prec_recall_test<-plotROCCurves(thresh_vs_perf_test, measures = list(tpr, ppv), diagonal = FALSE)+  # Add points
+                    ggtitle(paste0("Precision-Recall Curve, Test Performance, ", samplecount_test))+
+                    theme(plot.title = element_text(size = 10))
+
+
+# Plots - Perf vs thresh --------------
+ThreshvsPerf_plots_test<-plotThreshVsPerf(thresh_vs_perf_test)
+
+
+
+```
+
+
+
+## Results PLots 
+```{r}
+
+# sensitivity 
+
+plot_test_sensi
+plot_test_sensi_all
+
+
+# plots 
+ft_neg_test
+ft_pos_test
+
+
+prec_recall_test
+ThreshvsPerf_plots_test
+
+```
+
+## Results Summary 
+```{r}
+    
+print(paste0("Sensivity point performance across multi thresholds on aggregated training data"))
+
+test_perf_confmat_allthresh$Performance
+
+
+print(paste0("Confusion Matrix across multi thresholds on aggregated training data"))
+
+test_perf_confmat_allthresh$ConfusionMat
+
+
+
+# Obtained Objects 
+print(paste0("Test Performance (Threshold of ", desired_prob_thresh, ")"))
+
+test_perf
+
+print(paste0("Test Confusion Matrix (Threshold of ", desired_prob_thresh, ")"))
+
+test_confmat
+
+
+```
+
+# Joint Summary 
+```{r}
+
+
+temp<-test_perf
+colnames(temp)[1]<-paste0("Test_", colnames(test_perf)[1])
+
+
+temp2<-cv_perf_agg
+colnames(temp2)[1]<-paste0("CV_agg_", colnames(cv_perf_agg)[1])
+
+
+temp3<-test_confmat
+colnames(temp3)[3]<-paste0("Test_", colnames(test_perf)[1])
+
+temp4<-cv_confmat_agg
+colnames(temp4)[3]<-paste0("CV_agg_", colnames(cv_perf_agg)[1])
+
+
+
+# Merge test and training performance metrics and desired threshold 
+performance_summary_desiredthresh<-cbind(temp, temp2)
+
+
+# Merge test and training performance metrics and desired threshold 
+confmat_summary_desiredthresh<-full_join(temp3, temp4)
+
+
+
+
+# Produced objects 
+performance_summary_desiredthresh
+
+
+confmat_summary_desiredthresh
+```
+
+
+
+
+
+
+
+
+# CLOSING ------------------
+### Save Object Sizes ***Specify Objects***
+```{r}
+
+# Note- rather than saving all created objects I will specify the three dataframes we need for the next code section. 
+
+
+objects_created <- c( "tunedSvmPars", 
+                               "tunedSvmModel", 
+                               "svm_cv_method_val",
+                               "thresh_sensi_top", # Based on F1 and/or Recall From Class. Seni. Analysis 
+                               "thresh_sensi_bot")# Based on Negative Predictive Value and/or Specificity from Class seni analysis 
+
+
+reccord_dim <- function(objects) {
+  
+  result <- list()
+  
+  for (obj_name in objects) {
+    
+    if (exists(obj_name)) {
+      
+      obj <- get(obj_name)
+      
+      if (is.data.frame(obj) || is.matrix(obj)) {
+        
+        rows <- nrow(obj)
+        cols <- ncol(obj)
+        result[[obj_name]] <- list(rows = rows, cols = cols)
+        
+      } else {
+        
+        warning(paste("Object labeled ", obj_name, "is not a data frame or a matrix. Skipping."))
+      }
+      
+    } else {
+      
+      warning(paste("Object", obj_name, "does not exist. Skipping."))
+      
+    }
+  }
+  return(result)
+}
+
+objects_dim_list<-reccord_dim(objects_created)
+
+
+
+
+#          Summary --------------------------------------------- 
+
+print("Created Objects Summary:")
+print(objects_dim_list)
+
+```
+
+
+### Exporting and Clean Up - Part 1/2
+```{r}
+#           Create Output File ------------------------------------------------------
+
+
+current_output_folder<-paste0(script_name_base, "_", run_timestamp, ".Rmd")
+
+dir.create(current_output_folder)
+
+script_path_with_output_folder <- file.path(script_path_folder, 
+                                            current_output_folder)
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Executed Code ----------------------------------------------------
+
+copy_and_output_code <- function(script_path) {
+  if (file.exists(script_path)) {
+    
+    rstudioapi::documentSave()
+    
+    script_content <- readLines(script_path)
+    
+    writeLines(script_content, current_output_folder)
+  } else {
+    message("Error: The specified script path does not exist.")
+  }
+}
+
+# Call the function to copy and export the code
+copy_and_output_code(script_path_current)
+
+#           Export Run Info ---------------------------------------------------------
+
+writeLines(capture.output(run_sessionInfo), "sessionInfo.txt")
+
+```
+
+### Exporting and Clean Up - Part 2/2 **Specify Objects**
+```{r}
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Objects as .rda - **SPECIFY OBJECTS**----------------------------------------------------
+
+objects_save<-c( objects_created, "objects_dim_list")
+
+                            
+save(list=objects_save,                   
+     file = "env_obj.rda")
+
+#           Export Tables/Genes Individually- **SPECIFY OBJECTS** ----------------------------------------
+
+    write_lines(tunedSvmPars, "tunedSvmPars.txt" )
+    write_lines(tunedSvmModel, "tunedSvmModel.txt")
+
+
+# Sensitivity Analysis 
+
+sensi_plot_names<-c("plot_cv_agg_sensi", 
+                    "plot_cv_agg_sensi_all",
+                    "plot_test_sensi",
+                    "plot_test_sensi_all")
+
+        dir.create("Results_Sensitivity", recursive = TRUE, showWarnings = FALSE)
+        
+        for (nm in sensi_plot_names) {
+          ggsave(
+            filename = file.path("Results_Sensitivity", paste0(nm, ".pdf")),
+            plot = get(nm)
+          )
+        }
+
+# CV Performance Curves
+        
+       cv_plot_names <- c( # Aggregated performance plots (on desired thresh)
+
+                          "ft_neg_agg_cv",
+                          "ft_pos_agg_cv",
+                          "prec_recall_agg_cv",
+                          
+                          # Per Iteration performance plots (on desired thresh)
+                          "ft_neg_cv",
+                          "ft_pos_cv",
+                          "prec_recall_cv"
+                        )
+
+        dir.create("Results_CV/Plots", recursive = TRUE, showWarnings = FALSE)
+        
+            
+        ggsave(
+            filename = file.path("Results_CV/Plots", "ThreshvsPerf_plots_iter_cv.pdf"),
+            plot = ThreshvsPerf_plots_iter_cv, units = "in", width = 10, height = 8
+          )
+            
+        for (nm in cv_plot_names) {
+          ggsave(
+            filename = file.path("Results_CV/Plots", paste0(nm, ".pdf")),
+            plot = get(nm)
+          )
+        }
+
+# Testing Performance Curves
+        
+                        
+      test_plot_names<-c(
+                        "ft_neg_test",
+                        "ft_pos_test",
+                        
+                        
+                        "prec_recall_test")
+
+          dir.create("Results_Test/Plots", showWarnings = FALSE, recursive = TRUE)
+        
+            
+        ggsave(
+            filename = file.path("Results_Test/Plots", "ThreshvsPerf_plots_test.pdf"),
+            plot = ThreshvsPerf_plots_test, units = "in", width = 10, height = 8
+          )
+        
+        
+        for (nm in test_plot_names) {
+          ggsave(
+            filename = file.path("Results_Test/Plots", paste0(nm, ".pdf")),
+            plot = get(nm)
+          )
+        }
+          
+      
+
+# Learning Curves
+          
+
+    learn_plot_names <- c("acc_agg_plot_withlegend", "mmce_agg_plot_withlegend",
+                              "acc_agg_plot",
+                              "mmce_agg_plot",
+                              "tpr_agg_plot",
+                              "fpr_agg_plot",
+                              "tnr_agg_plot",
+                              "fnr_agg_plot"
+                            )
+
+          dir.create("Results_Learning", showWarnings = FALSE, recursive = TRUE)
+          
+                  for (nm in learn_plot_names) {
+                    ggsave(
+                      filename = file.path("Results_Learning", paste0(nm, ".pdf")),
+                      plot = get(nm), units = "in", width =3, height = 3
+                    )
+                  }
+          
+      
+
+# Performance vs thresh 
+    
+    
+    
+# Export CSV
+  
+
+# Sensitivity Performance 
+write.csv(cv_perf_confmat_allthresh$Performance, 
+          file = file.path("Results_Sensitivity","cv_perf_confmat_allthresh_Performance.csv"), 
+          row.names = TRUE)
+
+write.csv(cv_perf_confmat_allthresh$ConfusionMat, 
+          file = file.path("Results_Sensitivity","cv_perf_confmat_allthresh_ConfusionMat.csv"), 
+          row.names = TRUE)
+
+
+write.csv(test_perf_confmat_allthresh$Performance, 
+          file = file.path("Results_Sensitivity", "test_perf_confmat_allthresh_Performance.csv"), 
+          row.names = TRUE)
+
+write.csv(test_perf_confmat_allthresh$ConfusionMat, 
+          file = file.path("Results_Sensitivity","test_perf_confmat_allthresh_ConfusionMat.csv"), 
+          row.names = TRUE)
+
+
+
+
+
+# CV Performance Aggregated
+write.csv(cv_perf_agg, 
+          file = file.path("Results_CV", "cv_perf_agg.csv"),
+          row.names = TRUE)
+    
+write.csv(cv_confmat_agg, 
+          file = file.path("Results_CV", "cv_confmat_agg.csv"),
+          row.names = TRUE)
+    
+
+# CV Performance Per Iteration
+write.csv(cv_perf_per_iter, 
+          file = file.path("Results_CV", "cv_perf_per_iter.csv"),
+          row.names = TRUE)
+    
+write.csv(cv_confmat_per_iter, 
+          file = file.path("Results_CV", "cv_confmat_per_iter.csv"),
+          row.names = TRUE)
+    
+
+
+# Test Performance
+
+write.csv(test_perf, 
+          file = file.path("Results_Test", "test_perf.csv"), 
+          row.names = TRUE)  # keeps the metric names as the first column
+
+write.csv(test_confmat, 
+          file = file.path("Results_Test", "test_confmat.csv"), 
+          row.names = TRUE)  # keeps the metric names as the first column
+
+
+
+
+# Joint SUmmary 
+
+write.csv(performance_summary_desiredthresh, 
+          file = "performance_summary_desiredthresh.csv", 
+          row.names = TRUE)  # keeps the metric names as the first column
+
+write.csv(confmat_summary_desiredthresh, 
+          file =  "confmat_summary_desiredthresh.csv", 
+          row.names = TRUE)  # keeps the metric names as the first column
+
+
+# Read CSV files in folder
+CSV_Files <- list.files(path = script_path_with_output_folder, pattern = ".csv$")
+
+# Zip the files
+zip::zip(zipfile = "exported_objects.zip", files = CSV_Files)
+
+#Remove CSV files
+file.remove(CSV_Files)
+
+
+ 
+```
+
+
+### Clear Env./Re-Add Generated Objects
+```{r}
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Clear Environment/Re-Add Generated Objects  ------------------------------------------------------
+
+
+#clear environment
+rm(list = ls()) #USE VERY CAREFULLY ONLY ACTIVATE AT END OF PIPELINE
+```

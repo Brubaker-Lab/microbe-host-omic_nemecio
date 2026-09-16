@@ -1,0 +1,464 @@
+---
+title: "Zimm_clustogram"
+author: "Dali_Nemecio"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# START
+# Set up 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set WD
+```{r}
+wd <- "/Users/dalinemecio/Documents/1_Rotations/Brubaker/R/SVM_Multi_Drug"
+setwd(wd)
+```
+
+## Library
+```{r}
+# List of required packages
+packages <- c(
+  "data.table",
+  "readxl",
+  "stringr",
+  "readr",
+  "rstudioapi",
+  "tidyverse",
+  "dplyr",
+  "circlize", "pheatmap")
+
+
+
+# Install missing packages
+missing_pkgs <- packages[!packages %in% rownames(installed.packages())]
+if(length(missing_pkgs)) install.packages(missing_pkgs)
+
+lapply(packages, library, character.only = TRUE)
+installed <- packages %in% rownames(installed.packages())
+
+
+if (any(!installed)) {
+  install.packages(packages[!installed])
+}
+
+
+```
+
+## Get Script Info 
+```{r}
+#           Collect Script Info and Change To Script Directory ---------------
+
+
+#Script Directory
+script_path_current <- getSourceEditorContext()$path
+script_path_folder<-sub("/[^/]*$", "", script_path_current)
+script_name<-sub(".*/", "", script_path_current)
+script_name_base<-sub("\\..*$", "", script_name)
+
+#Change directory in all code chunks to current script location
+knitr::opts_knit$set(root.dir = script_path_folder)
+ 
+
+#           Collect Run Info------------------------------------------- 
+run_timestamp <- format(Sys.time(), "%Y_%m_%d_%H%M")
+
+run_sessionInfo<-sessionInfo()    
+```
+
+
+
+## Shortcuts 
+```{r}
+source("/Users/dalinemecio/Documents/1_Rotations/Brubaker/R/x_smaller_folders/short_cuts/short_cuts.R")
+```
+
+## Load Data 
+```{r}
+
+# Paths 
+path_libr<-"/Users/dalinemecio/Documents/1_Rotations/Brubaker/7_Raw_Files_Library/"
+path_data_local<-"/Users/dalinemecio/Documents/1_Rotations/Brubaker/R/SVM_Multi_Drug/z_data/"
+path_explore<-"/Users/dalinemecio/Documents/1_Rotations/Brubaker/R/SVM_Multi_Drug/code_explore_data/zimm/"
+# Objects 
+
+# Zimmerman Supplemental 3 table 
+zimm<-read_excel(paste0(path_data_local,"zimmerman_sup_table3.xlsx"), skip = 4) 
+zimm<-as.data.frame(zimm)
+colnames(zimm)[1]<-c("drug") 
+
+
+# Bacteria Order Found on publishd clustogram
+ordered_bact_76 <- read.table(paste0(path_data_local,"publication_adaptations/ordered_76_bacteria_clustogram.txt"), 
+                 header = FALSE,        
+                 sep = "\t",            
+                 stringsAsFactors = FALSE)
+
+# Drug order found on published clustogram 
+ordered_drugs_176 <- read.table(paste0(path_data_local,"publication_adaptations/ordered_176_meta_drugs_clustogram.txt"), 
+                 header = FALSE,       
+                 sep = "\t",          
+                 stringsAsFactors = FALSE)
+
+
+
+```
+
+
+# MAIN -----------------------------------------------------------
+
+# Clean Zimm
+```{r}
+
+# Make all character columns lowercase
+zimm <- zimm %>% mutate(drug = tolower(drug))
+
+```
+
+
+# Reconstruct Values from Zimm Figure 1 
+The recalculations are based off of the Matlab code provided by Zimmerman et. al.
+
+## Extract Values from Zimm Raw
+```{r}
+# 1. Enter -----------
+
+df <- zimm
+ 
+# 2. Identify column groups ----------------
+
+fc_t      <- grep("^FC ", colnames(df), value = TRUE) # Will Capture FC and FC STD
+fcstd_cols   <- grep("^FC STD", fc_t, value = TRUE)
+fc_cols<-setdiff(fc_t, fcstd_cols)
+
+pfdr_cols    <- grep("^p\\(FDR\\)", colnames(df), value = TRUE)
+drug_col     <- "drug"
+adaptive_col <- "Drug adaptive FC threshold %"
+
+# 3. Extract matrices of specified values --------------
+
+drugFC       <- as.matrix(df[, fc_cols])
+drugFCstd    <- as.matrix(df[, fcstd_cols])
+drugP        <- as.matrix(df[, pfdr_cols])
+drugNames    <- df[[drug_col]]
+drugAdaptive <- df[[adaptive_col]]
+      
+    
+# 4. Extract species names from FC columns ------------
+
+species_names <- str_replace(fc_cols, "^FC ", "")
+species_names <- str_squish(species_names)
+
+# 5. Remove any 'Control' species -------------------
+
+control_idx <- grepl("Control", species_names)
+drugFC      <- drugFC[, !control_idx, drop = FALSE]
+drugP       <- drugP[, !control_idx, drop = FALSE]
+species_names <- species_names[!control_idx]
+
+```
+
+## Convert and Clean FC
+```{r}
+
+# Step 1: Convert adaptive FC to log2 scale -----------------
+
+    drugAdaptive <- abs(log2((100 - drugAdaptive) / 100))  # See explanation for - drugAdaptive below 
+
+# Step 2: Define thresholds ----------------------------------
+    # This step filters drugs where NO SPECIES meet the adaptive FC and p value criteria for the drug. 
+    # P value taken from MatLab code. 
+
+    pThreshold  <- 0.05
+
+# Step 3: Check the drugAdaptive threshold  ---------------------------------
+
+    adaptive_pass <- drugFC <= -matrix(drugAdaptive, 
+                                   nrow = nrow(drugFC), 
+                                   ncol = ncol(drugFC),
+                                   byrow = TRUE)
+
+    # FC for that species +drug combo is less than of equal to the -drug adaptive value 
+    # if FALSE that species does not meet the adaptive threshold 
+    # if TRUE that species DOES meet the adaptive threshold 
+    # A drug is removed only if all species fail,
+
+    any(adaptive_pass) # TRUE
+
+
+# Step 4: Check the p-value threshold ---------------------------------
+    
+    p_pass <- drugP <= pThreshold
+
+    # if TRUE that species and drug pass the p value threshold
+    # if false that species and drug do not pass the p value threhsold 
+
+   any(p_pass) # TRUE 
+
+# Step 5: Combine both conditions ---------------------------------
+   
+    combined_pass <- adaptive_pass & p_pass
+    # if TRUE then  both the adaptive threhsold and p value threshold are passed 
+    
+        any(combined_pass) # TRUE 
+    
+
+
+# Step 6: Identify drugs to remove (columns where no rows pass) --------------
+    
+    remove_drugs <- rowSums(combined_pass) == 0 # counts per species how many drugs its passes both thresholds for 
+
+
+# Step 7: Filter out drugs failing thresholds ---------------------------------
+    
+    drugFC <- drugFC[!remove_drugs, , drop = FALSE]  # rows = drugs, columns = species
+    drugP  <- drugP[!remove_drugs, , drop = FALSE]
+    drugNames <- drugNames[!remove_drugs]
+    drugAdaptive <- drugAdaptive[!remove_drugs]
+
+
+# Step 8: Replace NaNs (as in MATLAB) ---------------------------------
+    
+    drugP[is.na(drugP)]     <- 1
+    drugFC[is.na(drugFC)]   <- 0
+
+# Step 9: Apply thresholds to FC and p-values, then convert to percent consumed ------
+    # This step Masks the non-sig values for plotting, "visually blanked"
+    
+    drugFC <- drugFC * (drugP <= pThreshold) * 
+              (drugFC <= -matrix(drugAdaptive, nrow = nrow(drugFC), 
+                                 ncol = ncol(drugFC), byrow = TRUE))
+    
+    drugFC <- 1 - 2^drugFC   # convert to % consumed like MATLAB
+    
+
+```
+
+
+
+# Prep 
+
+## Forced clustering order
+
+```{r}
+
+# Transpose 
+drugFC_df<-as.data.frame(base::t(drugFC))
+
+# Assign Names and Clean  
+colnames(drugFC_df)<-drugNames
+rownames(drugFC_df)<-tolower(species_names)
+
+# Clean Names from published clustogram 
+ordered_bact_76<-tolower(ordered_bact_76$V1)
+ordered_bact_76<-trimws(ordered_bact_76)
+ordered_bact_76_final<-rev(ordered_bact_76)
+
+ordered_drugs_176<-tolower(ordered_drugs_176$V1)
+ordered_drugs_176_final<-trimws(ordered_drugs_176)
+
+
+```
+
+
+
+## Find Diff
+```{r}
+# ID which Drugs to drop - Compare Drug Composition -------------------------------------
+
+dif_t1<-setdiff(drugNames, ordered_drugs_176_final) # 
+ 
+ 
+dif_t2<-setdiff(ordered_drugs_176_final, drugNames ) 
+
+      
+      
+```
+
+FYI 
+This code (like earlier in the pipeline) pulls the bacteria names for our regenerated clustogram from the names of the columns in the csv file, some of these names are either incorrectly formatted or spelled incorrectly(!). For ease sake, we will edit the .txt that contains the names copied from fig 3 of the publication so that it matches the names in the csv file we are using to derive the values for the clustogram. Note though that there are misspellings both unintentionally in the raw csv file and intentionally in the .txt file. The purpose of the intentional misspelling is so that our forced order clustogram will actually work with the mislabeled csv-inherited names. 
+
+Here are the manual edits I made to the .txt file:  
+
+t <- c(
+  "escherichia coli k-12",                          # manually changes in .txt
+  "bifidobacterium adolescentis atcc15703",         # edited number
+  "enterobacter cancerogenus atcc35316",            # edit numb
+  "pretovella copri dsm18205",                      # spelled incorrectly in “Raw csv” prob b/c of how the string was extracted. For ease sake I will change the .txt file to also be incorrect
+  "bifidobacterium longum subsp. infantis ccug52486", # manually changed in .txt
+  "lactobacillus reuteri cf48-3a bei hm-102",       # manually change in .txt I think they shortened some of the names in the clustogram figure
+  "bifidobacterium ruminatum",                      # spelled incorrectly in , manually changed
+  "akkermansia muciniphila atccbaa-835",            # edit numb
+  "odoribacter splanchnius",                        # edit .txt name
+  "bacteroides wh2 wh2",                            # edit name
+  "bryantia formatexigens dsm14469",                # edit name
+  "alistipes indistinctus dsm 22520",               # edit name
+  "victivallis vadensis atcc baa-548"               # edit name
+)
+
+
+
+## Modify to Mimic Fig 1 
+```{r}
+
+# 1. Drop drugs that are not in published fig 1
+    # We are removing the 16 drugs that remained in our drugFC but are not found in the published clustogram. 
+    drugFC_ordered<-drugFC_df%>%select(-all_of(dif_t1))
+
+# 2. Recreate/add drug for missing/dropped drugs
+    # These are the 12 drugs that are in their published clustogram that were dropped while generating our drugFC. 
+    # Since they were dropped we will readd then but with zero FC values. 
+
+    mat <- matrix(0, nrow = nrow(drugFC_ordered), ncol = l(dif_t2)) 
+    ord_t<-as.data.frame(mat)
+    colnames(ord_t)<-dif_t2
+    
+# 3. Merge the df
+    
+    drugFC_ordered<- cbind(drugFC_ordered, ord_t)
+    
+# 4. Order cols as in Fig 1 
+    
+    drugFC_ordered<-drugFC_ordered%>%
+                                select(all_of(ordered_drugs_176_final))
+    
+# 5. Reorder rows to match Fig 1
+    
+    pos <- match(ordered_bact_76_final, rownames(drugFC_ordered))
+    drugFC_ordered <- drugFC_ordered[pos[!is.na(pos)], , drop = FALSE]
+
+```
+
+
+# CLOSING --------------------------------------------------
+### Save Object Sizes ***Specify Objects***
+```{r}
+
+# Note- rather than saving all created objects I will specify the three dataframes we need for the next code section. 
+
+objects_created <- c("drugFC_ordered",
+                     "ordered_drugs_176_final",
+                     "ordered_bact_76_final"
+                     )
+
+reccord_dim <- function(objects) {
+  
+  result <- list()
+  
+  for (obj_name in objects) {
+    
+    if (exists(obj_name)) {
+      
+      obj <- get(obj_name)
+      
+      if (is.data.frame(obj) || is.matrix(obj)) {
+        
+        rows <- nrow(obj)
+        cols <- ncol(obj)
+        result[[obj_name]] <- list(rows = rows, cols = cols)
+        
+      } else if(is.vector(obj)){
+        
+        length <- length(obj)
+      
+        result[[obj_name]] <- list(rows = length, cols = NA)
+      
+      } else {
+        
+        warning(paste("Object labeled ", obj_name, "is not a data frame or a matrix, or a vector. Skipping."))
+      }
+      
+    } else {
+      
+      warning(paste("Object", obj_name, "does not exist. Skipping."))
+      
+    }
+  }
+  return(result)
+}
+
+objects_dim_list<-reccord_dim(objects_created)
+
+
+
+#          Summary --------------------------------------------- 
+# cat("There are ** ", length(shared_ids), " ** unique patient IDs and ** ", length(shared_genes), " ** shared genes found between input RNA and mbiocomp datasets.\n", "CREATED OBJECT DIMENSIONS AS FOLLOWS : \n")
+
+print(objects_dim_list)
+
+```
+
+### Exporting and Clean Up - Part 1/2
+```{r}
+#           Create Output File ------------------------------------------------------
+
+
+current_output_folder<-paste0(script_name_base, "_", run_timestamp, ".Rmd")
+
+dir.create(current_output_folder)
+
+script_path_with_output_folder <- file.path(script_path_folder, 
+                                            current_output_folder)
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Executed Code ----------------------------------------------------
+
+copy_and_output_code <- function(script_path) {
+  if (file.exists(script_path)) {
+    
+    rstudioapi::documentSave()
+    
+    script_content <- readLines(script_path)
+    
+    writeLines(script_content, current_output_folder)
+  } else {
+    message("Error: The specified script path does not exist.")
+  }
+}
+
+# Call the function to copy and export the code
+copy_and_output_code(script_path_current)
+
+#           Export Run Info ---------------------------------------------------------
+
+writeLines(capture.output(run_sessionInfo), "sessionInfo.txt")
+
+
+```
+
+### Exporting and Clean Up - Part 2/2 **Specify Objects**
+```{r}
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Objects as .rda - **SPECIFY OBJECTS**----------------------------------------------------
+
+objects_save<-c( objects_created, "objects_dim_list")
+
+                            
+save(list=objects_save,                   
+     file = "env_obj.rda")
+
+
+
+# Export as CSV 
+
+write.csv(drugFC_ordered, file = paste0(script_path_with_output_folder, "/drugFC_ordered.csv"), row.names = TRUE)
+
+# Export Plot 
+
+pdf(file.path(script_path_with_output_folder, "clust_forcedorder.pdf"), width = 11, height = 6)
+
+grid::grid.newpage()
+grid::grid.draw(hm$gtable)
+dev.off()
+
+ 
+```
+
+
+# END OF SCRIPT----------------------------------------

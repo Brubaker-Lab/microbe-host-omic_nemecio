@@ -1,0 +1,1841 @@
+---
+title:  "8_prediction.rmd"
+author: "Dali_Nemecio"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+This code will predict on the mic-host-omic corr values, you must rerun this code to specify if you want, only +1 and -1 (sanity check since it was used to train/test the data) or NA (which would be prediction).
+
+See Section "*Keystone* Select Data for Entry -1, +1, NA" to input desired predictions. 
+
+# SET UP ------------
+
+```{r , include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Set up
+
+```{r}
+#           Load Library **SPECIFY**------------------------------------------------------------
+packages_needed<-c("knitr", "tidyverse",
+                   "tibble", 
+                   "dplyr",
+                   "mlr","openxlsx",
+                   "rstudioapi","stringr", "tidytable" , "grid", "pheatmap") 
+
+for (pkg in packages_needed){
+if ( !require(pkg, character.only = TRUE)){
+  library(pkg, character.only = TRUE)
+} 
+}
+
+#           Collect Script Info and Change To Script Directory ---------------
+
+
+#Script Directory
+script_path_current <- getSourceEditorContext()$path
+script_path_folder<-sub("/[^/]*$", "", script_path_current)
+script_name<-sub(".*/", "", script_path_current)
+script_name_base<-sub("\\..*$", "", script_name)
+
+#Change directory in all code chunks to current script location
+knitr::opts_knit$set(root.dir = script_path_folder)
+ 
+
+#           Collect Run Info------------------------------------------- 
+run_timestamp <- format(Sys.time(), "%Y_%m_%d_%H%M")
+
+run_sessionInfo<-sessionInfo()
+
+```
+
+### Shortcuts
+
+```{r}
+source("/Users/dalinemecio/Documents/1_Rotations/Brubaker/R/x_smaller_folders/short_cuts/short_cuts.R")
+```
+
+### Load Data and Objects Required
+
+```{r}
+# Load Data - Collect .rda files ----------------------------------------
+
+#       Find Previous Code Folder -----------------------------
+
+# Find the last slash
+last_slash <- max(gregexpr("/", script_path_folder)[[1]])
+
+# Extract the substring
+substring_after_last_slash <- substr(script_path_folder, last_slash + 1, nchar(script_path_folder))
+
+# Extract the first number
+first_number <- regmatches(substring_after_last_slash, regexpr("[0-9]+", substring_after_last_slash))
+
+# Convert the first number to an integer and subtract 1
+new_number <- as.integer(first_number) - 1
+
+# Construct the new path
+new_path <- paste0(
+  substr(script_path_folder, 1, last_slash),
+  new_number,
+  "_*"
+)
+
+# Function to find directory matching the pattern
+find_directory <- function(path_with_wildcard) {
+  
+  # Extract directory path without wildcard
+  directory_path <- dirname(path_with_wildcard)
+  
+  # List files matching the pattern
+  matching_files <- list.files(directory_path, pattern = basename(path_with_wildcard))
+  
+  # Check if any matching directory exists
+  matching_directories <- matching_files[dir.exists(file.path(directory_path, matching_files))]
+  
+  if (length(matching_directories) > 0) {
+    
+    return(file.path(directory_path, matching_directories[1]))
+    
+  } else {
+    return(NULL)
+  }
+}
+
+# Find the actual directory matching the wildcard
+rda_directory <- find_directory(new_path)
+
+#       Load .rda files  ---------------------------------
+
+# Get list of all .rda files recursively
+rda_files <- list.files(path = rda_directory, 
+                        pattern = "\\.rda$",
+                        recursive = TRUE,
+                        full.names = TRUE)
+
+# reccord what we had before 
+objects_before<-ls()
+
+# Load each .rda file in  folder 
+for (file in rda_files) {
+  load(file)
+}
+# reccord what we got
+
+objects_after<-ls()   
+
+# whats the diff 
+newobjects<-setdiff(objects_after,objects_before)
+
+# see new stuff
+newobjects
+
+#       Collect starting Envr.  ---------------------------------
+
+objects_starting<-ls()
+
+```
+
+### Check Input Object Sizes
+
+```{r}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+
+### Obtain Objects from Folder 1\_\*
+
+```{r}
+#       Find Object Code Folder -----------------------------------
+
+        other_folder_number<-1
+
+        # Construct the new path
+
+        more_objects_path <- paste0(
+          substr(script_path_folder, 1, last_slash),
+          other_folder_number,
+          "_*"
+        )
+        
+        more_objects_path_defined<-find_directory(more_objects_path)
+        
+        
+# Get objects from other folder 
+
+rda_files<-list.files(path = more_objects_path_defined, 
+                          pattern = "\\.rda$",
+                          recursive = TRUE,
+                          full.names = TRUE) 
+   
+# reccord what we had before 
+objects_before<-ls()
+
+# Load each .rda file in  folder 
+for (file in rda_files) {
+  load(file)
+}
+# reccord what we got
+
+objects_after<-ls()   
+
+# whats the diff 
+newobjects<-setdiff(objects_after,objects_before)
+
+# see new stuff
+newobjects
+
+#get downloaded objects 
+objects_starting<-ls()
+
+```
+
+### Check Input Object Sizes *skip*
+
+```{r, eval=FALSE }
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+
+### Obtain Objects from Folder 3\_\*
+
+```{r}
+#       Find Object Code Folder -----------------------------------
+
+        other_folder_number<-3
+
+        # Construct the new path
+
+        more_objects_path <- paste0(
+          substr(script_path_folder, 1, last_slash),
+          other_folder_number,
+          "_*"
+        )
+        
+        more_objects_path_defined<-find_directory(more_objects_path)
+        
+        
+# Get objects from other folder 
+
+rda_files<-list.files(path = more_objects_path_defined, 
+                          pattern = "\\.rda$",
+                          recursive = TRUE,
+                          full.names = TRUE) 
+   
+# reccord what we had before 
+objects_before<-ls()
+
+# Load each .rda file in  folder 
+for (file in rda_files) {
+  load(file)
+}
+# reccord what we got
+
+objects_after<-ls()   
+
+# whats the diff 
+newobjects<-setdiff(objects_after,objects_before)
+
+# see new stuff
+newobjects
+
+#get downloaded objects 
+objects_starting<-ls()
+
+```
+
+### Check Input Object Sizes
+
+```{r}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+
+### Obtain Objects from Folder 5\_\*
+
+```{r}
+#       Find Object Code Folder -----------------------------------
+
+        other_folder_number<-5
+
+        # Construct the new path
+
+        more_objects_path <- paste0(
+          substr(script_path_folder, 1, last_slash),
+          other_folder_number,
+          "_*"
+        )
+        
+        more_objects_path_defined<-find_directory(more_objects_path)
+        
+        
+# Get objects from other folder 
+
+rda_files<-list.files(path = more_objects_path_defined, 
+                          pattern = "\\.rda$",
+                          recursive = TRUE,
+                          full.names = TRUE) 
+   
+# reccord what we had before 
+objects_before<-ls()
+
+# Load each .rda file in  folder 
+for (file in rda_files) {
+  load(file)
+}
+# reccord what we got
+
+objects_after<-ls()   
+
+# whats the diff 
+newobjects<-setdiff(objects_after,objects_before)
+
+# see new stuff
+newobjects
+
+#get downloaded objects 
+objects_starting<-ls()
+
+```
+
+### Check Input Object Sizes
+
+```{r}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+
+### Obtain Objects from Folder 6\_\*
+
+```{r}
+#       Find Object Code Folder -----------------------------------
+
+        other_folder_number<-6
+
+        # Construct the new path
+
+        more_objects_path <- paste0(
+          substr(script_path_folder, 1, last_slash),
+          other_folder_number,
+          "_*"
+        )
+        
+        more_objects_path_defined<-find_directory(more_objects_path)
+        
+        
+# Get objects from other folder 
+
+rda_files<-list.files(path = more_objects_path_defined, 
+                          pattern = "\\.rda$",
+                          recursive = TRUE,
+                          full.names = TRUE) 
+   
+# reccord what we had before 
+objects_before<-ls()
+
+# Load each .rda file in  folder 
+for (file in rda_files) {
+  load(file)
+}
+# reccord what we got
+
+objects_after<-ls()   
+
+# whats the diff 
+newobjects<-setdiff(objects_after,objects_before)
+
+# see new stuff
+newobjects
+
+#get downloaded objects 
+objects_starting<-ls()
+
+```
+
+### Check Input Object Sizes
+
+```{r}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+
+### Obtain Objects from Folder 7\_\*
+
+```{r}
+#       Find Object Code Folder -----------------------------------
+
+        other_folder_number<-7
+
+        # Construct the new path
+
+        more_objects_path <- paste0(
+          substr(script_path_folder, 1, last_slash),
+          other_folder_number,
+          "_*"
+        )
+        
+        more_objects_path_defined<-find_directory(more_objects_path)
+        
+        
+# Get objects from other folder 
+
+rda_files<-list.files(path = more_objects_path_defined, 
+                          pattern = "\\.rda$",
+                          recursive = TRUE,
+                          full.names = TRUE) 
+   
+# reccord what we had before 
+objects_before<-ls()
+
+# Load each .rda file in  folder 
+for (file in rda_files) {
+  load(file)
+}
+# reccord what we got
+
+objects_after<-ls()   
+
+# whats the diff 
+newobjects<-setdiff(objects_after,objects_before)
+
+# see new stuff
+newobjects
+
+#get downloaded objects 
+objects_starting<-ls()
+
+```
+
+### Check Input Object Sizes
+
+```{r}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+
+# needed objects
+```{r}
+dim(Master_MHG_corr_sig_NA_500)         
+dim(Master_MHG_corr_sig_test_500)        
+dim(Master_MHG_corr_sig_train_500)         
+
+
+dim(top_500_summary)            
+dim(drugFC_ordered) 
+tunedSvmModel
+
+```
+
+# MAIN ----------------------------------------
+
+# Define Functions
+
+```{r}
+# Prepare and strip data for MLR functions ----------
+
+prep_mlr_pred<-function(df, featvec, statecol){
+  
+  
+# col name consistency - gene col names in dataframe 
+    names(df)<-gsub("\\-",".",names(df))
+    
+
+# col name consistency - Gene col names featvector
+    featvec<-gsub("\\-",".",featvec)
+
+    #desired col names in training data
+    alongforride_colnames<-colnames(df[1:6])
+    
+    colnames_w_features<- c(alongforride_colnames, featvec)
+   
+  # Filter known classes using dynamic column name
+  DF_known <- df %>%
+    # dplyr::filter(.data[[statecol]] %in% c(-1, 1)) %>%
+    dplyr::select(all_of(colnames_w_features))
+
+  # Convert target to factor safely
+  DF_known[[statecol]] <- factor(DF_known[[statecol]] #, levels = c( 1, -1)) 
+                                    )
+  
+  # Strip down to target + features
+  out_stripped <- DF_known %>%
+    dplyr::select(all_of(c(statecol, featvec)))
+
+  # Diagnostics
+  print(paste0("Dimensions of entering df: ", dim(df)[1], " x ", dim(df)[2]))
+  print(paste0("Dimensions of output df: ", dim(out_stripped)[1], " x ", dim(out_stripped)[2]))
+
+  print("Count of drug metabolism state in out data:")
+  print(table(out_stripped[[statecol]], useNA = "ifany" ))
+
+  return(out_stripped)
+  
+}
+
+```
+
+## Assign name of model
+
+```{r}
+nameofmodel<-"MultiDrugSVM"
+```
+
+## *Keystone* Select Data for Entry -1, +1, NA
+
+```{r}
+
+test_train<-rbind(Master_MHG_corr_sig_test_500, Master_MHG_corr_sig_train_500) # Contains -1, +1
+
+Master_MHG_corr_sig<-rbind(test_train, Master_MHG_corr_sig_NA_500 ) # Contains NA 
+
+d(Master_MHG_corr_sig)  # Contains all -1, +1, and NA 
+
+
+# Define Entering Data --------------
+# Enter_data<-Master_MHG_corr_sig       # Contains all -1, +1, and NA 
+  Enter_data<-test_train                # Contains all -1, +1
+# Enter_data<-Master_MHG_corr_sig_NA_500  # Contains  NA 
+
+
+
+# State Choice and collect info -------------------------
+
+if (l(u(Enter_data$state)) == l(u(Master_MHG_corr_sig$state)) ){
+  print("Will prediction on Data with known metbolism state -1, +1 (a sanity check). AND will predict on data with NA. ")
+  
+  microbestates<-"Microbes predicted on include known states (-1, +1) and NAs"
+  
+  
+}
+
+if (l(u(Enter_data$state)) == l(u(test_train$state)) ){
+  print("Will prediction on Data with known metbolism state -1, +1 ONLY (a sanity check). No novel predictions being made on the NAs ")
+  
+  microbestates<-"Microbes predicted on include known states (-1, +1)."
+  }
+  
+if (l(u(Enter_data$state)) == l(u(Master_MHG_corr_sig_NA_500$state)) ){
+  print("Will predict on novel data with NA only, no known metabolism state data is being assessed. ")
+  
+  microbestates<-"Microbes predicted on are only NAs. "
+}
+
+```
+
+## *Keystone* Main Prediction threshold 
+
+```{r}
+
+# With respect to probability of +1 call 
+
+# Sensitivity Thresholds 
+thresh_sensi_top
+thresh_sensi_bot
+
+print(paste0("Top Classification Threshold for Meta calls based on Sensi: ", thresh_sensi_top))
+print(paste0("Top Classification Threshold for Meta calls based on Sensi: ",thresh_sensi_bot))
+
+```
+
+# Predictions on Data
+
+### Prep Data 
+
+Create Data to be predicted with Selected Features
+
+```{r}
+
+select_feats<-top_500_summary%>%pull(gene) # redundant but fxn needs it tp ru
+
+data_prediction_stripped<-prep_mlr_pred(Enter_data, select_feats, "state")
+
+
+```
+
+### Execute 
+Modify predictions based on sensitivity-determined threshold, model will auto generate predictions based on 0.5 class thresh 
+
+Anything that is less that our Meta Thresh and higher than our Nonmeta Thresh is undetermined therefore denoted as 0. 
+
+This means anything that is equal to our sensitivity-determined thresh is included in their respective class.
+
+```{r}
+
+# Make predictions on unknown microbes ------------------------
+predictions<-predict(object = tunedSvmModel,
+                     newdata= data_prediction_stripped) # keystone 
+
+# Clean predictions, label groups  ------------------------
+
+predictions_labeled<-cbind(Enter_data[["microbe"]],Enter_data[["drug"]],      as.data.frame(predictions)) 
+
+colnames(predictions_labeled)[1]<- "Microbes"
+colnames(predictions_labeled)[2]<- "Drugs"
+
+predictions_labeled<-predictions_labeled%>%
+                          mutate(group = paste(Microbes,Drugs, response, sep = "_"))%>%
+                          mutate(response=as.numeric(as.character(response)))%>%  
+                          mutate( #  Keystone APPLY THRESHOLD 
+                                    response = case_when(
+                                      prob.1 > thresh_sensi_top ~ 1,
+                                      prob.1 < thresh_sensi_bot ~ -1,
+                                      TRUE ~ 0
+                                    ))%>%
+                        arrange(desc(prob.1))
+          
+# Collect
+predict_df_name<-deparse(substitute(predictions_labeled))
+
+
+```
+
+### Summarize 
+
+```{r}
+
+# Stats of Predictions and Probabilities ------------------------------
+# Metabolizing probabilities for x axis order and CI calc ---------------------
+
+predictions_sum<- predictions_labeled%>%
+                        group_by(Microbes)%>%
+                        summarise(prob1_ave=mean(prob.1),
+                                  prob1_sd=sd(prob.1), 
+                                  n=dplyr::n() ) %>%
+                        arrange(desc(prob1_ave))%>%
+                        mutate(
+                          se_prob = prob1_sd / sqrt(n),
+                          z_critical = qnorm(0.975), # Calculate z critical value for 95% confidence interval
+                          ci_lower = prob1_ave - z_critical * se_prob,
+                          ci_upper = prob1_ave + z_critical * se_prob
+                        )
+
+```
+
+### Plot 
+
+#### On Microbes
+
+```{r}
+
+
+# Data Prep ----------------------------------
+
+
+#collect pos calls
+pred_lab_round<-predictions_labeled%>%
+                  dplyr::select(Microbes, prob.1, response)%>%
+                  mutate(response=as.factor(response))
+                  
+                  
+# collapse data
+merged_data <- merge(pred_lab_round, predictions_sum, by = "Microbes")
+
+
+# Define Values for Graphing ---------------------------------
+
+level_order<-u(predictions_sum$Microbes) # NOTE - Meta average only to define x axis order 
+
+# Specify colors 
+group_colors <- c( "Nonmetabolize" = "#1e88e5",  "Metabolize"= "#d81b60","Indeterminate" = "grey")
+
+merged_data$response <- factor(merged_data$response, 
+                               levels = c(-1, 0, 1), 
+                               labels = c("Nonmetabolize", "Indeterminate", "Metabolize"))
+
+# PLOT ------------------
+pred_plot<-{
+  ggplot(merged_data, 
+         aes(x = factor(Microbes, level = level_order), 
+             y = prob.1, 
+             color = response)) +
+    
+    theme_bw() +
+    
+    ylim(-0.01, 1.01) +
+    geom_jitter(alpha = 0.5, width = 0.2, size = 2) +
+    
+    geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2, color = "black") +
+    
+    stat_summary(fun = mean, geom = "point", 
+                 shape = 16, size = 2, col = "black")+
+    
+    geom_hline(yintercept=thresh_sensi_top, linetype="dashed", color = "darkgrey") + 
+    geom_hline(yintercept=thresh_sensi_bot, linetype="dashed", color = "darkgrey") +
+    
+    
+    
+    scale_color_manual(values = group_colors,                        
+                       breaks = c("Metabolize", "Indeterminate", "Nonmetabolize"), 
+                       name = "Predicted Classification", 
+                       ) +
+    
+    theme(
+          plot.title = element_text(hjust =0.5, vjust = 4),
+          plot.subtitle = element_text(hjust = 0.5, vjust = 2),
+          
+          axis.text.x = element_text(angle = 45, hjust = 1), 
+          
+          axis.title.x = element_text(vjust = -1), 
+          axis.title.y = element_text(vjust = 5), 
+          
+          
+          plot.margin = unit(c(1,1,1,1), "cm")) +
+    
+    labs(title = "Prediction Probabilities ",
+         subtitle = nameofmodel
+    ) +
+    xlab("Microbes") +
+    ylab("Probability of Metabolizing") +
+    labs(
+      caption = microbestates
+    ) +
+    theme(
+      plot.caption = element_text(hjust = 1, vjust = 0)
+    )
+  
+}
+
+
+# Save 
+ggplot2::ggsave("pred_plot.pdf",pred_plot,
+        width = 7,
+        height = 5)
+
+
+
+```
+
+#### On Drugs
+
+#### Summarize Predictions on Drugs
+
+```{r}
+
+# Metabolizing probabilities for x axis order and CI calc ---------------------
+
+predictions_sum_drugs<- predictions_labeled%>%
+                        group_by(Drugs)%>%
+                        summarise(prob1_ave=mean(prob.1),
+                                  prob1_sd=sd(prob.1), 
+                                  n=dplyr::n() ) %>%
+                        arrange(desc(prob1_ave))%>%
+                        mutate(
+                          se_prob = prob1_sd / sqrt(n),
+                          # Calculate z critical value for 95% confidence interval
+                          z_critical = qnorm(0.975),
+                          ci_lower = prob1_ave - z_critical * se_prob,
+                          ci_upper = prob1_ave + z_critical * se_prob
+                        )
+
+```
+
+#### Plot Predictions on Drugs
+
+```{r}
+
+
+# Data Prep ----------------------------------
+
+
+#collect pos calls
+pred_lab_round_drug<-predictions_labeled%>%
+                  dplyr::select(Drugs, prob.1, response)%>%
+                  mutate(response=as.factor(response))
+                  
+                  
+# collapse data
+merged_data_drug <- merge(pred_lab_round_drug, predictions_sum_drugs, by = "Drugs")
+
+
+# Define Values for Graphing ---------------------------------
+
+level_order_drug<-u(predictions_sum_drugs$Drugs) # NOTE - Meta average only to define x axis order 
+
+# Specify colors 
+group_colors <- c( "Nonmetabolize" = "#1e88e5",  "Metabolize"= "#d81b60","Indeterminate" = "grey")
+
+merged_data_drug$response <- factor(merged_data_drug$response, 
+                               levels = c(-1, 0, 1), 
+                               labels = c("Nonmetabolize", "Indeterminate", "Metabolize"))
+
+# PLOT ------------------
+pred_plot_drugs<-{
+  ggplot(merged_data_drug, 
+         aes(x = factor(Drugs, level = level_order_drug), 
+             y = prob.1, 
+             color = response)) +
+    
+    theme_bw() +
+    
+    ylim(-0.01, 1.01) +
+    geom_jitter(alpha = 0.5, width = 0.2, size = 2) +
+    
+    geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2, color = "black") +
+    
+    stat_summary(fun = mean, geom = "point", 
+                 shape = 16, size = 2, col = "black")+
+    
+    geom_hline(yintercept=thresh_sensi_top, linetype="dashed", color = "darkgrey") + 
+    geom_hline(yintercept=thresh_sensi_bot, linetype="dashed", color = "darkgrey") +
+    
+    
+    
+    scale_color_manual(values = group_colors,                        
+                       breaks = c("Metabolize", "Indeterminate", "Nonmetabolize"), 
+                       name = "Predicted Classification", 
+                       ) +
+    
+    theme(
+          plot.title = element_text(hjust =0.5, vjust = 4),
+          plot.subtitle = element_text(hjust = 0.5, vjust = 2),
+          
+          axis.text.x = element_text(angle = 45, hjust = 1), 
+          
+          axis.title.x = element_text(vjust = -1), 
+          axis.title.y = element_text(vjust = 5), 
+          
+          
+          plot.margin = unit(c(1,1,1,1), "cm")) +
+    
+    labs(title = "Prediction Probabilities ",
+         subtitle = nameofmodel
+    ) +
+    xlab("Drugs") +
+    ylab("Probability of Metabolizing") +
+    theme(
+      plot.caption = element_text(hjust = 1, vjust = 0)
+    )
+  
+}
+
+# pred_plot_drug
+
+# Normally would save at the end however for some reason it keep messing up the group order so we are saving it here. 
+# Save 
+ggplot2::ggsave("pred_plot_drugs.pdf", pred_plot_drugs,
+        width = 7,
+        height = 5)
+
+
+```
+
+
+
+
+## Prep - Orient Wider
+
+```{r}
+
+{
+  
+temp<-as.data.frame(predictions_labeled)%>%
+                            select(Microbes, Drugs, `prob.1`)%>%
+                            tidyr::pivot_wider(names_from = "Drugs", "values_from" = `prob.1`) # FYI produces NAS if combo not found 
+  
+temp<-as.data.frame(temp)%>%
+                            dplyr::arrange(match(Microbes, ordered_bact_76_final))
+
+predictions_labeled_wider<-as.data.frame(temp)%>% # order by reference vector
+                            select(Microbes, any_of(ordered_drugs_176_final))
+
+predictions_labeled_wider<-as.data.frame(predictions_labeled_wider)
+rownames(predictions_labeled_wider)<-predictions_labeled_wider$Microbes
+
+
+predictions_labeled_wider_strip<-predictions_labeled_wider%>%select(-Microbes)
+}
+
+
+```
+
+
+
+# CORR ------------------------
+with DrugFC
+
+## Prep
+
+### Clean names of DrugFC
+
+```{r}
+## Clean Microbe names 
+
+d((drugFC_ordered)) # 76 176
+
+# Clean the bacteria names set as rownames ----------------
+
+  # Split DF into non-unique vs unique values 
+  # Genus species that appears multi time cannot be a rowname
+  # rownames must be unique 
+
+  drugFC_ordered_t <- drugFC_ordered %>%       
+    mutate(microbe = rownames(.)) %>%
+    select(microbe, everything())
+  
+  rownames(drugFC_ordered_t)<- NULL 
+  
+  
+  
+    
+  # Microbes that are non-unique 
+    t_1 <- drugFC_ordered_t %>%
+                          filter(str_starts(microbe, "bacteroides fragilis") |
+                                   str_starts(microbe, "bacteroides thetaiotaomicron"))  
+    
+  # Clean Genus 
+  t_1$microbe <- gsub(
+                            "^bacteroides",     # pattern: starts with 'bacteroides'
+                            "Bacteroides",      # replacement
+                            t_1$microbe, 
+                            ignore.case = FALSE
+                          )
+  
+  # microbes that are unique therefore should have name cleaned 
+    t_2 <- drugFC_ordered_t %>%  
+                          filter(
+                            !str_starts(microbe, "bacteroides fragilis") &
+                            !str_starts(microbe, "bacteroides thetaiotaomicron")
+                          )
+    
+    t_2_clean<-  t_2%>%mutate(
+                microbe = microbe %>%
+                  map_chr(~ {
+                    words <- str_split(.x, " ")[[1]]   # split string by space
+                    first_two <- words[1:2]            # take first two words
+                    # Capitalize only the first letter of the first word
+                    first_two[1] <- paste0(
+                      toupper(substr(first_two[1], 1, 1)),
+                      substr(first_two[1], 2, nchar(first_two[1]))
+                    )
+                    paste(first_two, collapse = " ")   # join back into string
+                  })
+              )
+
+  # Rejoin unique and non unique microbe names 
+    drugFC_ordered_clean_t<-rbind(t_1,t_2_clean)
+    drugFC_ordered_clean_t<-drugFC_ordered_clean_t%>%select(microbe, everything())
+
+    
+   # produced objects 
+    d(drugFC_ordered_clean_t) # 76 177 Total # 13452
+    
+```
+
+There are unique microbes but there are multiples of the same genus species with unique strain associations.
+
+### Elongate and Split Drug FC
+
+```{r}
+# Remove drugs that are not predicted on 
+
+share1<-intersect( colnames(drugFC_ordered_clean_t)[-1], u(Enter_data$drug))
+
+
+# Elongate -------------------
+
+drugFC_long<-drugFC_ordered_clean_t%>%
+                            select(microbe, all_of(share1))%>%
+                            pivot_longer(cols = share1[1]:share1[l(share1)], 
+                                         names_to = "Drugs", 
+                                         values_to= "drugfc")
+
+# Seperate out B. frag and B thet 
+
+                        drugFC_split1_frag<-drugFC_long%>%
+                                                                filter(str_starts(microbe, "Bacteroides fragilis")) %>%
+                                                                as.data.frame(.)
+                        
+
+                        drugFC_split2_thet<-drugFC_long%>%
+                                                                filter(str_starts(microbe, "Bacteroides thetaiotaomicron")) %>%
+                                                                as.data.frame(.)
+                      
+                        
+                                                                       
+# Separate out the other microbes that ARE already unique 
+                        drugFC_split3<-drugFC_long%>%
+                                      filter(!str_starts(microbe, "Bacteroides fragilis") &
+                                             !str_starts(microbe, "Bacteroides thetaiotaomicron"))  %>%
+                                                                as.data.frame(.)
+
+
+
+
+```
+
+### Elongate and Split Prediction non unique out
+
+```{r}
+
+
+# Split ---------------------------------
+
+# "Bacteroides fragilis"
+
+        max_frag<-l(u(drugFC_split1_frag$microbe))-1
+
+        pred_split1_frag<-predictions_labeled_wider %>%  
+                                filter(
+                                  str_starts(Microbes, "Bacteroides fragilis")
+                                )%>%
+                                bind_rows(slice(., 1)[rep(1, max_frag), ])
+
+        # Rename to match with drugfc 
+        pred_split1_frag$Microbes<-u(drugFC_split1_frag$microbe)
+      
+        
+
+# "Bacteroides thetaiotaomicron"
+        
+        max_thet<-l(u(drugFC_split2_thet$microbe))-1
+        
+        pred_split2_thet<-predictions_labeled_wider %>%  
+                                filter(
+                                  str_starts(Microbes, "Bacteroides thetaiotaomicron")
+                                )%>%
+                                   bind_rows(slice(., 1)[rep(1, max_thet), ]) 
+        
+        # Rename to match with drugfc 
+        pred_split2_thet$Microbes<-u(drugFC_split2_thet$microbe)
+
+  
+# Third slice       
+  pred_split3<-predictions_labeled_wider %>%  
+                          filter(
+                            !str_starts(Microbes, "Bacteroides thetaiotaomicron") &
+                            !str_starts(Microbes, "Bacteroides fragilis")
+                          )
+
+
+
+# Merge and pivot longer 
+    pred_t<-rbind(pred_split1_frag,pred_split2_thet )
+    pred_t2<-rbind(pred_t, pred_split3)
+
+    
+# collect col names 
+    colnam<-n(pred_t2)[2:l(pred_t2)]
+    
+    
+    predictions_labeled_long<-pred_t2%>%pivot_longer(cols = colnam[1]:colnam[l(colnam)],  
+                                                     names_to= "Drugs", 
+                                                     values_to = "prob.1")%>%
+                                        filter( !is.na(prob.1 )) 
+
+
+```
+
+FYI, there are some microbe and drug combo that are not predicted on, presumably they were dropped at the correlation step.
+
+### Merge predictions and drugFC
+
+Inner join means it will only include values where the microbe and drug names match between the two DF 
+
+```{r}
+
+join<-inner_join(predictions_labeled_long, as.data.frame(drugFC_long),
+                     by = c("Microbes" = "microbe", "Drugs" = "Drugs")) # bottle neck is the predictions_labeled_long
+
+
+
+```
+
+## Corr *Sensitivity-determined Threshold* -------------------------------
+#### Functions 
+```{r}
+
+Corr_Class<-function(type, join, thresh_sensi_top, thresh_sensi_bot){
+  
+  # If combining Meta and Non meta groups do joint correlation
+  if(type=="Combined"){
+    
+            # Separate out the meta and non meta predictions and DrugFCs 
+          if(thresh_sensi_top == thresh_sensi_bot ){
+            #The same 
+            
+            join<-join%>%
+              filter(`prob.1`>= thresh_sensi_top | `prob.1`< thresh_sensi_bot)
+            
+            
+          }else{
+            join<-join%>%
+              filter(`prob.1`>= thresh_sensi_top | `prob.1`<= thresh_sensi_bot)
+          }
+    
+      if(nrow(join)>=2){
+        
+      # Do the correlation
+      corr_out <-cor.test(join$prob.1, join$drugfc, method=c("spearman")) # keystone
+      
+      {
+      # Replace NULL with NA safely
+      param_val <- if (is.null(corr_out$parameter)) NA else corr_out$parameter
+      pval_val  <- if (is.null(corr_out$p.value)) NA else corr_out$p.value
+      cor_meta<-c(as.data.frame(corr_out$estimate)[1, 1])
+      
+      
+      comb_out<-data.frame(
+                          group       = c("Combined Meta and NonMeta"),
+                          statistic   = c(as.data.frame(corr_out$statistic)[1, 1]),
+                          parameter   = c(param_val),
+                           p.value    = c(pval_val),
+                          estimate    = c(cor_meta),
+                          null.value  = c(as.data.frame(corr_out$null.value)[1, 1]),
+                          alternative = c(corr_out$alternative),
+                          method      = c(corr_out$method),
+                          data.name   = c(corr_out$data.name)
+                        )
+                            
+      }
+      
+      # Produced Correlations 
+      
+      print(comb_out)
+      
+      print(paste0("Assessing the probability of metabolozing from the combined -1 and +1 predictions with Zimm drugFC produces: ", cor_meta))
+      
+      }else{
+        
+        
+      print(paste0("There are not enough Meta and NonMeta predictions (no thresh) between the drugs predicted on (thresh present) and shared with DrugFC inorder to do the combined correlation between probability and DrugFC. "))
+      
+              
+      cor_meta <- NA_real_
+      
+      
+      meta_1<-data.frame(
+        group       = c("Combined Meta and NonMeta"),
+        statistic   = c(NA_real_),
+        parameter   = c(NA_real_),
+        p.value     = c(NA_real_),
+        estimate    = c(NA_real_),
+        null.value  = c(NA_real_),
+        alternative = c("Unable to Calculate"),
+        method      = c(NA_real_),
+        data.name   = c(NA_real_)
+      )
+        
+      }# end of if statement
+          
+    
+    
+    
+    
+    
+    
+    
+  } # end of COmbined 
+  
+  
+  if(type=="Seperate"){ 
+    
+          if(thresh_sensi_top == thresh_sensi_bot ){
+            #The same 
+            
+            pred_meta<-join%>%
+              filter(`prob.1`>= thresh_sensi_top)
+            
+            pred_nonmeta<-join%>%
+              filter(`prob.1`< thresh_sensi_bot)
+            
+          }else{
+
+            pred_meta<-join%>%
+              filter(`prob.1`>= thresh_sensi_top)
+            
+            pred_nonmeta<-join%>%
+              filter(`prob.1`<= thresh_sensi_bot)
+            
+          }
+  
+  
+  # Determine if both groups represented 
+  n_samplecorr<-nrow(pred_nonmeta)+nrow(pred_meta)
+  
+  # If more than two drugs/drugFC combos do the Corr
+  if(n_samplecorr >= 2){
+    
+    # Calculate the Meta Calls ------------------------
+
+        if(nrow(pred_meta) != 0){
+      
+      corr_meta_calls <-cor.test(pred_meta$prob.1, pred_meta$drugfc, method=c("spearman")) # keystone
+      
+      
+      # Replace NULL with NA safely
+      param_val <- if (is.null(corr_meta_calls$parameter)) NA else corr_meta_calls$parameter
+      pval_val  <- if (is.null(corr_meta_calls$p.value)) NA else corr_meta_calls$p.value
+      cor_meta<-c(as.data.frame(corr_meta_calls$estimate)[1, 1])
+      
+      
+      meta_1<-data.frame(
+        group       = c("Meta calls"),
+        statistic   = c(as.data.frame(corr_meta_calls$statistic)[1, 1]),
+        parameter   = c(param_val),
+        p.value    = c(pval_val),
+        estimate    = c(cor_meta),
+        null.value  = c(as.data.frame(corr_meta_calls$null.value)[1, 1]),
+        alternative = c(corr_meta_calls$alternative),
+        method      = c(corr_meta_calls$method),
+        data.name   = c(corr_meta_calls$data.name)
+      )
+      
+      
+    }else{
+      
+      meta_1 <- data.frame(estimate = NA_real_)
+      cor_meta <- NA_real_
+      
+      
+      meta_1<-data.frame(
+        group       = c("Meta calls"),
+        statistic   = c(NA_real_),
+        parameter   = c(NA_real_),
+        p.value     = c(NA_real_),
+        estimate    = c(NA_real_),
+        null.value  = c(NA_real_),
+        alternative = c("Unable to Calculate"),
+        method      = c(NA_real_),
+        data.name   = c(NA_real_)
+      )
+    } # end of meta if statement 
+    
+    # Calculate the NONMeta Calls ------------------------
+    
+    if(nrow(pred_nonmeta) != 0 ){
+      
+      corr_nonmeta_calls <-cor.test(pred_nonmeta$prob.1, pred_nonmeta$drugfc, method=c("spearman")) # keystone
+      
+      param_val_2 <- if (is.null(corr_nonmeta_calls$parameter)) NA else corr_nonmeta_calls$parameter
+      pval_val_2  <- if (is.null(corr_nonmeta_calls$p.value)) NA else corr_nonmeta_calls$p.value
+      cor_nonmeta<-c(as.data.frame(corr_nonmeta_calls$estimate)[1, 1])
+      
+      nonmeta_2 <- data.frame(
+        group       = c("Nonmeta calls"),
+        statistic   = c(as.data.frame(corr_nonmeta_calls$statistic)[1, 1]),
+        parameter   = c(param_val_2),
+        p.value     = c(pval_val_2),
+        estimate    = c(cor_nonmeta),
+        null.value  = c(as.data.frame(corr_nonmeta_calls$null.value)[1, 1]),
+        alternative = c(corr_nonmeta_calls$alternative),
+        method      = c(corr_nonmeta_calls$method),
+        data.name   = c(corr_nonmeta_calls$data.name)
+      )
+      
+    }else{
+      nonmeta_2 <- data.frame(estimate = NA_real_)
+      cor_nonmeta <- NA_real_
+      
+      
+      nonmeta_2 <- data.frame(
+        group       = c("Nonmeta calls"),
+        statistic   = c(),
+        parameter   = c(NA_real_),
+        p.value     = c(NA_real_),
+        estimate    = c(NA_real_),
+        null.value  = c(NA_real_),
+        alternative = c(NA_real_),
+        method      = c("Unable to Calculate"),
+        data.name   = c(NA_real_)
+      )
+      
+    } # end of non meta statement 
+    # Collect Correlation Output for Both --------------------
+    
+    
+    cor_stats_pos1_neg1<-rbind(meta_1, nonmeta_2)
+    
+
+    print(paste0("The metabolizing predictions (thresh ",thresh_sensi_top,") produce a probability score that correlates to the Zimm drugFC ground truth by: ", cor_meta))
+    
+    print(paste0("The NONmetanolizing predictions (thresh",thresh_sensi_bot,") produce a probability score that correlates to the Zimm drugFC ground truth by: ", cor_nonmeta))
+
+    
+  }else{
+    
+    cor_stats_pos1_neg1<-c("There are not enough Meta and NonMeta predictions between the drugs predicted on (thresh present) and shared with DrugFC inorder to do the correlation between probability and DrugFC. ")
+
+    
+    
+  } # end of enough rows  statement 
+  
+  print("Summary Table")
+  print(cor_stats_pos1_neg1)
+  
+  
+  
+  
+    
+  } # End of Seperate
+  
+  
+  
+} # end of function 
+
+
+
+Call_Sum<-function( join, thresh_sensi_top, thresh_sensi_bot) {
+  
+  
+# Meta Predictions 
+# Corr prob.1 with drugFC 
+top_prob1<-join%>%filter(prob.1 >= thresh_sensi_top)%>%pull(prob.1)
+top_drugfc<-join%>%filter(prob.1 >= thresh_sensi_top)%>%pull(drugfc)
+
+meta_sum <- data.frame(
+  group=c("Meta"),
+  thresh_top = thresh_sensi_top,
+  thresh_bottom = thresh_sensi_bot,
+  
+  prob1_mean   = round(mean(top_prob1, na.rm = TRUE), 2),
+  prob1_median = round(median(top_prob1, na.rm = TRUE), 2),
+  
+  drugfc_mean   = round(mean(top_drugfc, na.rm = TRUE), 2),
+  drugfc_median = round(median(top_drugfc, na.rm = TRUE), 2)
+)
+  
+  
+
+
+
+# NONmeta 
+# Corr prob.1 with drugFC 
+if(thresh_sensi_bot==thresh_sensi_top){
+bot_prob1<-join%>%filter(prob.1 < thresh_sensi_bot)%>%pull(prob.1)
+bot_drugfc<-join%>%filter(prob.1 < thresh_sensi_bot)%>%pull(drugfc)
+}else{
+  bot_prob1<-join%>%filter(prob.1 <= thresh_sensi_bot)%>%pull(prob.1)
+bot_drugfc<-join%>%filter(prob.1 <= thresh_sensi_bot)%>%pull(drugfc) }
+
+
+nonmeta_sum <- data.frame(
+  group=c("NonMeta"),
+  thresh_top = thresh_sensi_top,
+  thresh_bottom = thresh_sensi_bot,
+  
+  prob1_mean   = round(mean(bot_prob1, na.rm = TRUE), 2),
+  prob1_median = round(median(bot_prob1, na.rm = TRUE), 2),
+  
+  drugfc_mean   = round(mean(bot_drugfc, na.rm = TRUE), 2),
+  drugfc_median = round(median(bot_drugfc, na.rm = TRUE), 2)
+)
+  
+
+out<-rbind(meta_sum, nonmeta_sum)
+print("Summary of Prob and DrugFC")
+print(out)
+
+} # end of call summary 
+
+
+
+```
+
+#### Seperate Predictions of -1 and +1
+
+```{r}
+Corr_Class("Seperate", join, thresh_sensi_top, thresh_sensi_bot)
+
+```
+
+#### Combined Predictions
+
+```{r}
+Corr_Class("Combined", join, thresh_sensi_top, thresh_sensi_bot)
+
+```
+
+#### Drop Drugs and Corr Comb
+
+When we created DrugFC in the first section of this pipeline, there were drugs that were dropped by our code but were in the published heatmap, therefore I reintroduced them into the matrix so we could recreate the Zimm heatmap. However, note that some of these drugs may have been used to train the model (aslong as they appeared in the LINCS data).
+
+Idea: Keep these 12 drugs dropped and run entire pipeline and see if it improves the performance.
+
+For now, even if some of these drugs were used to train the model we will not retrain the model and instead drop them from assessing the correlation of the models prediction probability and the DrugFC.
+
+```{r}
+# Determined from rerunning first block of pipeline 
+
+dif_t2<-c(
+              "vinpocetine",
+              "cyclobenzaprine",
+              "fluvoxamine maleate",
+              "alfuzosin",
+              "diphenylpyraline",
+              "lofexidine",
+              "acecainide",
+              "camylofine",
+              "rizatriptan benzoate",
+              "sulpiride",
+              "trimetazidine",
+              "periciazine"
+            )
+
+# Drop them from the probabilities 
+join_drop<-join%>%filter(!(Drugs %in% dif_t2))
+
+Corr_Class("Combined", join_drop, thresh_sensi_top, thresh_sensi_bot)
+
+
+
+```
+
+
+
+#### Mean and Median of Prob 1 and DrugFC
+
+Run Section "Correlate Pred with DrugFC" in 8_prediction.rmd file, then return here!
+
+This can only be calculated from microbes and drugs found in both the prediction data and that are found in the DrugFC table. There are some microbe drug combinations that are in the DrugFC table that were dropped from training and testing since they did not meet the microbe proportion metabolism threshold or the metaabolism threshold at 12 hours.
+
+```{r}
+Call_Sum(join, thresh_sensi_top, thresh_sensi_bot)
+```
+
+
+
+
+## Corr Thresh 0.5 ---------------------------
+
+## *Define New Thresh*
+
+```{r}
+thresh50<-0.50
+```
+
+#### Seperate Predictions of -1 and +1
+
+```{r}
+Corr_Class("Seperate", join, thresh50, thresh50)
+```
+
+#### Combined Predictions
+
+```{r}
+Corr_Class("Combined", join, thresh50, thresh50)
+```
+
+#### Drop Drugs and Corr Comb
+
+When we created DrugFC in the first section of this pipeline, there were drugs that were dropped by our code but were in the published heatmap, therefore I reintroduced them into the matrix so we could recreate the Zimm heatmap. However, note that some of these drugs may have been used to train the model (as long as they appeared in the LINCS data).
+
+Idea: Keep these 12 drugs dropped and run entire pipeline and see if it improves the performance.
+
+For now, even if some of these drugs were used to train the model we will not retrain the model and instead drop them from assessing the correlation of the models prediction probability and the DrugFC.
+
+```{r}
+# Determined from rerunning first block of pipeline 
+
+dif_t2<-c(
+              "vinpocetine",
+              "cyclobenzaprine",
+              "fluvoxamine maleate",
+              "alfuzosin",
+              "diphenylpyraline",
+              "lofexidine",
+              "acecainide",
+              "camylofine",
+              "rizatriptan benzoate",
+              "sulpiride",
+              "trimetazidine",
+              "periciazine"
+            )
+
+# Drop them from the probabilities 
+join_drop<-join%>%filter(!(Drugs %in% dif_t2))
+
+Corr_Class("Combined", join_drop, thresh50, thresh50)
+
+
+
+```
+
+#### Mean and Median of Prob 1 and DrugFC
+
+Run Section "Correlate Pred with DrugFC" in 8_prediction.rmd file, then return here!
+
+This can only be calculated from microbes and drugs found in both the prediction data and that are found in the DrugFC table. There are some microbe drug combinations that are in the DrugFC table that were dropped from training and testing since they did not meet the microbe proportion metabolism threshold or the metaabolism threshold at 12 hours.
+
+```{r}
+# d(join) # 4294    4
+Call_Sum(join, thresh50, thresh50)
+```
+
+
+
+# **CLOSING STEPS**
+
+### Save Object Sizes ***Specify Objects***
+
+```{r}
+
+
+objects_created <- c( "tunedSvmModel", 
+                      "predictions_labeled", 
+                      "predictions_sum",          
+                      "predictions_sum_drugs"        
+            
+                     
+                         )
+
+reccord_dim <- function(objects) {
+  
+  result <- list()
+  
+  for (obj_name in objects) {
+    
+    if (exists(obj_name)) {
+      
+      obj <- get(obj_name)
+      
+      if (is.data.frame(obj) || is.matrix(obj)) {
+        
+        rows <- nrow(obj)
+        cols <- ncol(obj)
+        result[[obj_name]] <- list(rows = rows, cols = cols)
+        
+      } else {
+        
+        warning(paste("Object labeled ", obj_name, "is not a data frame or a matrix. Skipping."))
+      }
+      
+    } else {
+      
+      warning(paste("Object", obj_name, "does not exist. Skipping."))
+      
+    }
+  }
+  return(result)
+}
+
+objects_dim_list<-reccord_dim(objects_created)
+
+
+
+
+#          Summary --------------------------------------------- 
+
+print("Created Objects Summary:")
+print(objects_dim_list)
+
+
+```
+
+### Exporting and Clean Up - Part 1/2
+
+```{r}
+#           Create Output File ------------------------------------------------------
+
+
+current_output_folder<-paste0(script_name_base, "_", run_timestamp, ".Rmd")
+
+dir.create(current_output_folder)
+
+script_path_with_output_folder <- file.path(script_path_folder, 
+                                            current_output_folder)
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Executed Code ----------------------------------------------------
+
+copy_and_output_code <- function(script_path) {
+  if (file.exists(script_path)) {
+    
+    rstudioapi::documentSave()
+    
+    script_content <- readLines(script_path)
+    
+    writeLines(script_content, current_output_folder)
+  } else {
+    message("Error: The specified script path does not exist.")
+  }
+}
+
+# Call the function to copy and export the code
+copy_and_output_code(script_path_current)
+
+# Save Spreadsheet -----------
+
+#           Export Run Info ---------------------------------------------------------
+
+writeLines(capture.output(run_sessionInfo), "sessionInfo.txt")
+
+
+#           Export Info ---------------------------------------------------------
+
+
+wb <- createWorkbook()
+
+addWorksheet(wb, "Predictions")
+writeData(wb, "Predictions", predictions_labeled)
+
+addWorksheet(wb, "Per Microbe")
+writeData(wb, "Per Microbe", predictions_sum)
+
+addWorksheet(wb, "Per Drug")
+writeData(wb, "Per Drug", predictions_sum_drugs)
+
+saveWorkbook(wb, "Predictions.xlsx", overwrite = TRUE)
+
+
+```
+
+### Exporting and Clean Up - Part 2/2 **Specify Objects**
+
+```{r}
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Objects as .rda - **SPECIFY OBJECTS**----------------------------------------------------
+
+objects_save<-c( objects_created, "objects_dim_list")
+
+                            
+save(list=objects_save,                   
+     file = "env_obj.rda")
+ 
+
+
+ 
+```
+
+### Clear Env./Re-Add Generated Objects
+
+```{r}
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Clear Environment/Re-Add Generated Objects  ------------------------------------------------------
+
+
+#clear environment
+rm(list = ls()) #USE VERY CAREFULLY ONLY ACTIVATE AT END OF PIPELINE
+# rm(list = objects_save)
+
+#readd the objects
+load("env_obj.rda")
+
+
+  ## END ---------------------------------------------------------------------
+
+
+```

@@ -1,0 +1,747 @@
+---
+title: "lincs_multi"
+author: "Dali_Nemecio"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+Multiply the LINCS CD by the microbe-transcriptomics correlations. The data is then partitioned into testing/training based on the drug identity and are class balanced. Drugs that are Zimmerman restricted (and passed the microbe proportion check) are used for testing and training, all other drugs will be predicted on. 
+
+Cannot execute with slurm script need to run in interactive session.  
+
+Note that the host omic corr matrix (tranx vs mic) contains microbes with NAs across all genes, those are dropped. A summary output states the identities of these microbes. Since they are dropped they cannot be predicted on as their correlation is NA. 
+
+## Start ---------------------------------------------------------------------
+# SET UP MAC ---------------------------------------------------------------------
+## Library 
+```{r, eval=TRUE}
+packages_needed <- c("rsample",  
+                   "rstudioapi", 
+                   "tidyverse")
+
+for (pkg in packages_needed){
+  if ( !require(pkg, character.only = TRUE)){
+    library(pkg, character.only = TRUE)
+  } 
+}
+
+```
+
+## Script Info and Dir
+```{r, eval=TRUE}
+
+# Script Directory
+script_path_current <- getSourceEditorContext()$path
+script_path_folder <- sub("/[^/]*$", "", script_path_current)
+script_name <- sub(".*/", "", script_path_current)
+script_name_base <- sub("\\..*$", "", script_name)
+
+# Change directory in all code chunks to current script location
+knitr::opts_knit$set(root.dir = script_path_folder)
+
+# Collect Run Info
+run_timestamp <- format(Sys.time(), "%Y_%m_%d_%H%M")
+
+run_sessionInfo <- sessionInfo()
+
+```
+
+## Shortcuts
+```{r, eval=TRUE}
+source("/Users/dalinemecio/Documents/1_Rotations/Brubaker/R/x_smaller_folders/short_cuts/short_cuts.R")
+```
+
+## Load Data and Objects Required 
+### Data Prev Folder 
+```{r, eval=TRUE}
+# Load Data - Collect .rda files ----------------------------------------
+
+# Find Previous Code Folder -----------------------------
+
+# Find the last slash
+last_slash <- max(gregexpr("/", script_path_folder)[[1]])
+
+# Extract the substring
+substring_after_last_slash <- substr(script_path_folder, last_slash + 1, nchar(script_path_folder))
+
+# Extract the first number
+first_number <- regmatches(substring_after_last_slash, regexpr("[0-9]+", substring_after_last_slash))
+
+# Convert the first number to an integer and subtract 1
+new_number <- as.integer(first_number) - 1
+
+# Construct the new path
+new_path <- paste0(
+  substr(script_path_folder, 1, last_slash),
+  new_number,
+  "_*"
+)
+
+# Function to find directory matching the pattern
+find_directory <- function(path_with_wildcard) {
+   
+  # Extract directory path without wildcard
+  directory_path <- dirname(path_with_wildcard)
+   
+  # List files matching the pattern
+  matching_files <- list.files(directory_path, pattern = basename(path_with_wildcard))
+   
+  # Check if any matching directory exists
+  matching_directories <- matching_files[dir.exists(file.path(directory_path, matching_files))]
+   
+  if (length(matching_directories) > 0) {
+     
+    return(file.path(directory_path, matching_directories[1]))
+     
+  } else {
+    return(NULL)
+  }
+}
+
+# Find the actual directory matching the wildcard
+rda_directory <- find_directory(new_path)
+
+# Load .rda files  ---------------------------------
+
+# Get list of all .rda files recursively
+rda_files <- list.files(path = rda_directory, 
+                        pattern = "\\.rda$",
+                        recursive = TRUE,
+                        full.names = TRUE)
+
+# *NEW* objects before loading .rda from previous folder
+objects_beforeload <- ls()
+
+# Load each .rda file
+for (file in rda_files) {
+  load(file)
+}
+
+# NEW* objects obtains from load 
+
+objects_afterload <- ls()
+
+# Check Object dim by hand  ---------------------------------
+# A little redundant 
+loaded_obj <- setdiff(objects_afterload, objects_beforeload)
+loaded_obj <- loaded_obj[!loaded_obj %in% c("file", "objects_beforeload")]
+
+print("OBJECTS LOADED AND DIMENSIONS ")
+for (obj_name in loaded_obj) {
+  obj <- get(obj_name)  # get the actual object from its name
+  dims <- if (!is.null(dim(obj))) dim(obj) else length(obj)
+  print(paste0(obj_name, " Dim: ", paste(dims, collapse = " x ")))
+}
+
+# Collect starting Envr.  ---------------------------------
+
+objects_starting <- ls()
+
+```
+
+### Check Input Object Sizes 
+```{r, Check Input Object Sizes - Previous File, eval=TRUE}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+} else {
+  "No mismatch in loaded object sizes, continue code execution."
+}
+
+```
+
+
+### Obtain Objects from folder 3_*
+```{r, Obtain Objects from folder 3_*}
+#       Find Object Code Folder 3_* -----------------------------------
+
+        other_folder_number<-3
+
+        # Construct the new path
+
+        more_objects_path <- paste0(
+          substr(script_path_folder, 1, last_slash),
+          other_folder_number,
+          "_*"
+        )
+        
+        more_objects_path_defined<-find_directory(more_objects_path)
+        
+        
+# Get objects from other 3_* folder 
+
+rda_files<-list.files(path = more_objects_path_defined, 
+                          pattern = "\\.rda$",
+                          recursive = TRUE,
+                          full.names = TRUE) 
+   
+
+
+# Load each .rda file in 3_* folder 
+for (file in rda_files) {
+  load(file)
+}
+        
+
+#get downloaded objects 
+objects_starting<-ls()
+
+```
+
+### Check Input Object Sizes 
+
+```{r, Check Input Object Sizes - Folder 3_*}
+
+dim_check <- list()
+has_mismatch <- FALSE  # Variable to track if there's a mismatch
+
+for (obj_name in objects_starting) {
+  if (obj_name %in% names(objects_dim_list)) {
+    correct_dimensions <- objects_dim_list[[obj_name]]
+    actual_object <- get(obj_name)
+    actual_dimensions <- list(rows = nrow(actual_object), cols = ncol(actual_object))
+    
+    if (identical(correct_dimensions, actual_dimensions)) {
+      dim_check[[obj_name]] <- "Dimensions match"
+    } else {
+      # Construct the mismatch message
+      mismatch_msg <- "Dimensions mismatch:"
+      if (correct_dimensions$rows != actual_dimensions$rows) {
+        mismatch_msg <- paste(mismatch_msg, "Expected rows is", correct_dimensions$rows,
+                              "actual is", actual_dimensions$rows)
+      }
+      if (correct_dimensions$cols != actual_dimensions$cols) {
+        mismatch_msg <- paste(mismatch_msg, "Expected columns is", correct_dimensions$cols,
+                              "actual is", actual_dimensions$cols)
+      }
+      # Store the mismatch message in dim_check
+      dim_check[[obj_name]] <- mismatch_msg
+      has_mismatch <- TRUE  # Set has_mismatch to TRUE if there's a mismatch
+    }
+  }
+}
+
+# Print the output
+print(dim_check)
+
+# Check if there's a mismatch and stop if true
+if (has_mismatch) {
+  stop("There is at least one object with mismatched dimensions.")
+}  else {"No mismatch in loaded object sizes, continue code execution." }
+
+```
+
+
+# Required Objects
+```{r required_ojects}
+d(microbes_vs_genes_corr_loop) #  33 11780
+d(lincs_selectdrugs_share)     # 130 11781
+d(zimm_metabolism_state)       #  5330    3
+
+```
+
+# MAIN -------------
+# Set Seed 
+```{r}
+set.seed(2026)
+```
+
+# Clean microbe-omic corr 
+```{r clean_corr}
+
+# Remove Rows with NA values 
+  
+  mbio_corr_gene_clean<-microbes_vs_genes_corr_loop%>%
+                             filter(!if_all(everything(), is.na))
+
+
+# Summary -------
+
+paste0( "Dropped microbes due to NA in host (tranX vs mic) corr matrix :")
+print(setdiff(rn(microbes_vs_genes_corr_loop), rn(mbio_corr_gene_clean)) )
+  
+# Produced Objects --------------------
+paste0("Dimension of cleaned microbe-omic corr matrix: ", dim(mbio_corr_gene_clean)[1], " x ",dim(mbio_corr_gene_clean)[2])  # 181 x 11780 
+
+
+```
+
+### Generate LINCS  **Gene expression CD ** X Gene-Mic Corr (aka Microbe-Host Sig) -------------------------- 
+
+```{r generate_lincs_keystone}
+
+# ----Generate Input Data Matrix----------------------
+
+# Objects Needed 
+
+            # Make LINCS matrix 
+            lincs_selectdrugs_share_mat<-lincs_selectdrugs_share%>%
+                                          column_to_rownames("DRUG") %>%
+                                          as.matrix()
+
+           lincs_selectdrugs_share_mat_t<-base::t(lincs_selectdrugs_share_mat)
+
+# Execute 
+for(i in 1:ncol(lincs_selectdrugs_share_mat_t)){
+  
+          print(paste0("ENTER col index: ", i))
+  
+            # Record drug name 
+            drug_name<-colnames(lincs_selectdrugs_share_mat_t)[i]
+            
+            # Select the current drug CD 
+            current_lincs_drug<-as.data.frame(lincs_selectdrugs_share_mat_t[,i])
+            current_lincs_drug<-current_lincs_drug[[1]]
+          
+            
+            # Multiply the gene expression LINCS sig to the microbe-omic corr
+            
+            build_curr<-sweep(mbio_corr_gene_clean, MARGIN=2, current_lincs_drug, `*`) # KEYSTONE  2 = across cols 
+
+      # Collect and aggregate info 
+            
+      build_curr<-build_curr%>% mutate(
+                                  microbe = rownames(build_curr), 
+                                  drug = rep(drug_name, nrow(build_curr)))%>%
+                                  select(microbe, drug, everything(.))
+      
+      # Renaame the df if its the first one         
+      
+      if(i == 1){
+        building<- build_curr
+      } else { 
+        
+      # Add to main building DF 
+      
+        building<-rbind(building, build_curr)        
+      }
+      
+
+        
+      # If last col rename 
+        if(i == ncol(lincs_selectdrugs_share_mat_t) ){
+          
+          MHG_corr_sig<-building
+          
+        }
+}
+
+
+
+```
+
+
+# Assign Metabolism State 
+
+
+## Designate Microbes 
+```{r desig_mic}
+
+# Rename the B. thet and B. frag strains to pick one to represent the metabolism state. 
+# Note they are all similar in -1 +1 metabolism state so it really does not matter which one. 
+
+
+
+# Separate out B. frag and B thet 
+
+                        split1<-zimm_metabolism_state%>%
+                                                                filter(str_starts(microbe, "Bacteroides fragilis") |
+                                                                       str_starts(microbe, "Bacteroides thetaiotaomicron")) %>%  
+                                                                pivot_wider(names_from="drug", 
+                                                                            values_from="state")
+                        
+                        # Rename B frag 
+                        split1$microbe <- str_replace(
+                                                                            split1$microbe,
+                                                                            "^Bacteroides fragilis.*",
+                                                                            "Bacteroides fragilis"
+                                                                          )
+                        # Rename B Thet
+                        split1$microbe <- str_replace(
+                                                                            split1$microbe,
+                                                                            "^Bacteroides thetaiotaomicron.*",
+                                                                            "Bacteroides thetaiotaomicron"
+                                                                          )
+                        # Keep one of each                                                                        
+                        split1<-split1%>%
+                                       distinct(microbe, .keep_all = TRUE)%>%
+                                        pivot_longer(cols = acecainide:zaleplon, 
+                                                     names_to="drug", 
+                                                     values_to="state")
+
+# Separate out the other microbes that ARE already unique 
+                        split2<-zimm_metabolism_state%>%
+                                      filter(!str_starts(microbe, "Bacteroides fragilis") &
+                                             !str_starts(microbe, "Bacteroides thetaiotaomicron"))  
+
+                        
+                        
+# Remerge and make alphabetically 
+zimm_metabolism_state_mod<-rbind(split1, split2) %>%
+                                    arrange(microbe, drug )
+
+
+# Add Meta state, if no state found NA is provided
+ Master_MHG_corr_sig_temp<-MHG_corr_sig%>%
+                              inner_join(zimm_metabolism_state_mod, by=c("drug", "microbe"))%>%
+                              select(microbe, drug, state, everything(.))
+                     
+                    
+ 
+```
+
+#  Class Balancing Metabolism - for Training  
+### Define Fxn
+```{r, }
+
+# data<-large_sample_size
+# Define Proportion Functions ----------------------------------
+find_prop<- function(data){
+  
+  temp<-data
+  
+  temp$tally<-rep(1, nrow(temp))
+  
+  df<- xtabs(tally ~ microbe + state,  temp)
+  
+  prop<-proportions(df, "state")
+  
+  prop<-as.data.frame(prop)
+  
+  prop<-prop%>%
+    dplyr::arrange(microbe)%>%
+    mutate(Freq = round(Freq, digits = 2)) 
+  
+  return(prop)
+  
+}
+
+# assume all DF will have the same microbe, therefore the structure of the tables should contain the same microbe and be in alphabetical order. This code does not account for microbe being in different places within each respective table, nor if the dataframes have different microbe. 
+
+
+comp_prob_table<- function(df1,df2){ 
+  
+  
+  df1_prob<-find_prop(df1)
+  
+  df2_prob<-find_prop(df2)
+  
+  if (any( df1_prob != df2_prob ) ){
+    
+    print("DF DO NOT share all values")
+    return(FALSE) 
+    
+  } else { 
+    return (TRUE) }
+  
+}
+
+# Define Class Balance Function ----------------------------- 
+
+# boot_df<-Master_MHG_corr_sig_temp
+
+execute_classbal<-function(boot_df){
+  
+  # Split Bootstrap and Count Sample Size per Group ---------------------
+  
+  
+  boot_df_pos1<- boot_df%>%
+    filter(state == 1)
+  
+  boot_df_neg1<- boot_df%>%
+    filter(state == -1)
+  
+  boot_df_NA<-boot_df%>%
+    filter(is.na(state) )
+  
+  # Compare Sizes of Groups -----------------------
+  
+  if ( nrow(boot_df_neg1) != nrow(boot_df_pos1) ) {
+    
+    
+    if ( nrow(boot_df_neg1) > nrow(boot_df_pos1) ){
+      
+      large_sample_size<- boot_df_neg1
+      
+      small_sample_size<- boot_df_pos1
+      
+    }
+    
+    if ( nrow(boot_df_neg1) < nrow(boot_df_pos1) ){
+      
+      large_sample_size<- boot_df_pos1
+      
+      small_sample_size<- boot_df_neg1
+      
+      print("FYI the LARGER group is state POSITIVE 1 ")
+    }
+    
+    
+    # Prep for DF building ----------------------
+    
+    
+    
+    # Make Building Table Blank 
+    
+    building_table<-large_sample_size[FALSE,]
+    
+    # Define smaller group size to shrink larger
+    
+    small_group_size<- nrow(small_sample_size) 
+    
+    # Record ratio of larger group, determine counts needed to maintain proportions as we shrink
+    # We are assuming there are enough samples in the largest group to provide enough rows per microbe to condense to the smaller size 
+    
+    large_prob<-find_prop(large_sample_size)
+    
+    large_prob<-large_prob%>% 
+      mutate(require_count = ceiling( Freq * small_group_size ))
+    
+    
+    # Fill building table with specified counts 
+    for( i in 1:nrow(large_prob)){
+      
+      # Define microbe and count 
+      large_prob_row<-large_prob[i,]
+      
+      mic<-large_prob_row$microbe
+      
+      count<-large_prob_row$require_count
+      
+      
+      # Sort DF with select microbe only 
+      large_sample_size_microbe<-large_sample_size%>%
+        filter(microbe == mic)
+      
+      # Select required amount of rows 
+      selected_count<-dplyr::sample_n(large_sample_size_microbe, count)
+      
+      
+      # Merge with building table 
+      building_table<-rbind(selected_count, building_table)
+      
+    }
+    
+    
+    if( comp_prob_table(building_table, large_sample_size) == TRUE &    
+        nrow(small_sample_size) <= nrow(building_table) & 
+        nrow(building_table) <= nrow(small_sample_size)+nrow(large_prob) # wont be exactly equal, will max maxim largest difference if say there was one extra per microbe b/c of the rounding in the fxn 
+    ) {
+      
+      print(paste0("Created equal group size between -1 and 1, size per (+/-1): ", nrow(building_table)) )
+      
+      classbal_boot<-rbind(small_sample_size, building_table, boot_df_NA)
+      
+      
+    }
+    
+    
+    
+  } else {
+    
+    print(paste0("Existing equal group size between -1 and 1, size per: ", nrow(boot_df[which(boot_df$state==-1),]) + nrow(boot_df[which(boot_df$state== 1),]) ))
+    
+    classbal_boot<-boot_df
+    
+  }
+  
+  
+  return(classbal_boot)
+  
+  
+} # End of function
+
+
+
+```
+
+### Execute 
+```{r, }
+
+# Apply to list of bootstrapped dataframes ----------------------------------- 
+  
+Master_MHG_corr_sig<-execute_classbal(Master_MHG_corr_sig_temp)
+
+```
+
+
+# Produced Objects --------------------
+```{r}
+
+# Extract those with NA meta state -----------------------------
+Master_MHG_corr_sig_NA<- Master_MHG_corr_sig%>%
+                                        filter(is.na(state))
+
+# Extract those with -1 or +1 meta state ------------------------
+Master_MHG_corr_sig_temp2 <-Master_MHG_corr_sig%>%
+                                        filter(!is.na(state))
+
+# Create stratified split ---------------------------------------
+split <- initial_split(Master_MHG_corr_sig_temp2, prop = 0.8, strata = state)
+
+Master_MHG_corr_sig_train <- training(split)
+Master_MHG_corr_sig_test  <- testing(split)
+
+
+
+# Produced Objects ------------------------
+paste0("Prediction data dim: ", d(Master_MHG_corr_sig_NA)[1]," X " ,d(Master_MHG_corr_sig_NA)[2])
+paste0("Training data dim: ", d(Master_MHG_corr_sig_train)[1]," X " ,d(Master_MHG_corr_sig_train)[2])
+paste0("Testing data dim: ", d(Master_MHG_corr_sig_test)[1]," X " ,d(Master_MHG_corr_sig_test)[2])
+
+```
+
+# CLOSING ------------------
+### Save Object Sizes ***Specify Objects***
+```{r saveojb_size}
+
+# Note- rather than saving all created objects I will specify the three dataframes we need for the next code section. 
+
+objects_created <- c("Master_MHG_corr_sig_train", "Master_MHG_corr_sig_test", "Master_MHG_corr_sig_NA")
+
+reccord_dim <- function(objects) {
+  
+  result <- list()
+  
+  for (obj_name in objects) {
+    
+    if (exists(obj_name)) {
+      
+      obj <- get(obj_name)
+      
+      if (is.data.frame(obj) || is.matrix(obj)) {
+        
+        rows <- nrow(obj)
+        cols <- ncol(obj)
+        result[[obj_name]] <- list(rows = rows, cols = cols)
+        
+      } else {
+        
+        warning(paste("Object labeled ", obj_name, "is not a data frame or a matrix. Skipping."))
+      }
+      
+    } else {
+      
+      warning(paste("Object", obj_name, "does not exist. Skipping."))
+      
+    }
+  }
+  return(result)
+}
+
+objects_dim_list<-reccord_dim(objects_created)
+
+
+
+
+#          Summary --------------------------------------------- 
+
+print("Created Objects Summary:")
+print(objects_dim_list)
+
+```
+
+# Partition Testing, Training, and to Predict 
+```{r partition, eval= FALSE}
+
+# Extract those with NA meta state ------------------------
+
+Master_MHG_corr_sig_NA<- Master_MHG_corr_sig_temp%>%
+                                        filter(is.na(state))
+
+# Partition Testing and Training with Class Bal ---------- 
+
+Master_MHG_corr_sig_temp2<- Master_MHG_corr_sig_temp%>%
+                                   filter(!is.na(state))
+
+# Seperate -1 and +1 
+
+pos<-Master_MHG_corr_sig_temp2%>%filter(state == 1)
+neg<-Master_MHG_corr_sig_temp2%>%filter(state == -1)
+
+
+split <- initial_split(Master_MHG_corr_sig_temp2, prop = 0.8, strata = state)
+
+Master_MHG_corr_sig_train <- training(split)
+Master_MHG_corr_sig_test  <- testing(split)
+
+# Produced Objects --------------------
+paste0("Prediction data dim: ", d(Master_MHG_corr_sig_NA)[1]," X " ,d(Master_MHG_corr_sig_NA)[2])
+
+paste0("Training data dim: ", d(Master_MHG_corr_sig_train)[1]," X " ,d(Master_MHG_corr_sig_train)[2])
+
+paste0("Testing data dim: ", d(Master_MHG_corr_sig_test)[1]," X " ,d(Master_MHG_corr_sig_test)[2])
+
+
+```
+
+
+
+### Exporting and Clean Up - Part 1/2
+```{r export_1}
+#           Create Output File ------------------------------------------------------
+
+
+current_output_folder<-paste0(script_name_base, "_", run_timestamp, ".Rmd")
+
+dir.create(current_output_folder)
+
+script_path_with_output_folder <- file.path(script_path_folder, 
+                                          current_output_folder)
+
+
+#           Export Run Info ---------------------------------------------------------
+
+writeLines(capture.output(run_sessionInfo), file.path(script_path_with_output_folder, "sessionInfo.txt"))
+```
+
+### Exporting and Clean Up - Part 2/2 **Specify Objects**
+```{r export2}
+
+setwd(script_path_with_output_folder) # need to restate for each code chunk
+
+#           Export Objects as .rda - **SPECIFY OBJECTS**----------------------------------------------------
+
+objects_save<-c( objects_created, "objects_dim_list")
+
+                            
+save(list=objects_save,                   
+     file = "env_obj.rda")
+ 
+```
+
